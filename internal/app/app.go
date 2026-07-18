@@ -313,7 +313,7 @@ func (m *model) beginNewChat() tea.Cmd {
 	m.aiShowMore = false
 	m.aiSelected = map[string]bool{}
 	m.chatCreating = false
-	m.status = "Space to select · enter to start"
+	m.status = ""
 	m.err = ""
 	return loadAIProductsCmd(m.client)
 }
@@ -326,7 +326,7 @@ func (m *model) beginAddAI() tea.Cmd {
 	m.aiShowMore = false
 	m.aiSelected = map[string]bool{}
 	m.chatCreating = false
-	m.status = "Pick who to add · space to select · enter to add"
+	m.status = ""
 	m.err = ""
 	return loadAIProductsCmd(m.client)
 }
@@ -671,9 +671,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.aiIdx = 0
 		visible := m.visibleAIProducts()
 		if m.aiPurpose == "add" {
-			m.status = fmt.Sprintf("%d available · space to select · enter to add", len(visible))
+			m.status = fmt.Sprintf("%d available", len(visible))
 		} else {
-			m.status = fmt.Sprintf("%d selected · space to select more · enter to start", len(m.selectedAISlugs()))
+			m.status = fmt.Sprintf("%d selected", len(m.selectedAISlugs()))
 		}
 		m.err = ""
 		return m, nil
@@ -1036,12 +1036,7 @@ func (m model) updateNewAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.aiSelected[p.Slug] = !m.aiSelected[p.Slug]
 		m.err = ""
-		action := "start"
-		if m.aiPurpose == "add" {
-			action = "add"
-		}
-		n := len(m.selectedAISlugs())
-		m.status = fmt.Sprintf("%d selected · space to change · enter to %s", n, action)
+		m.status = fmt.Sprintf("%d selected", len(m.selectedAISlugs()))
 	case "a":
 		// Select all currently visible AIs.
 		m.aiSelected = map[string]bool{}
@@ -1050,7 +1045,7 @@ func (m model) updateNewAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.aiSelected[p.Slug] = true
 			}
 		}
-		m.status = fmt.Sprintf("%d selected · enter to start", len(m.selectedAISlugs()))
+		m.status = fmt.Sprintf("%d selected", len(m.selectedAISlugs()))
 		m.err = ""
 	case "m":
 		m.aiShowMore = !m.aiShowMore
@@ -1578,7 +1573,7 @@ func (m model) viewLogin() string {
 	if m.err != "" {
 		errLine = "\n" + theme.Error().Render(m.err)
 	}
-	help := theme.Footer().Width(w).Render("enter sign in · g Google · tab · q")
+	help := theme.Footer().Render("enter sign in · g Google · tab · q")
 	return lipgloss.JoinVertical(lipgloss.Left, banner, "", sub, "", form, errLine, "", help)
 }
 
@@ -1600,9 +1595,9 @@ func (m model) viewChats() string {
 		}
 		newRow := marker + "+ New chat"
 		if m.chatIdx == 0 {
-			list.WriteString(theme.Selected().Width(w-2).Render(newRow) + "\n")
+			list.WriteString(theme.Selected().Render(newRow) + "\n")
 		} else {
-			list.WriteString(theme.ListItem().Width(w-2).Render(newRow) + "\n")
+			list.WriteString(theme.ListItem().Render(newRow) + "\n")
 		}
 
 		if len(m.chats) == 0 {
@@ -1646,9 +1641,9 @@ func (m model) viewChats() string {
 				}
 				row := fmt.Sprintf("%s%s %s%s\n    %s", marker, num, titleText, unread, theme.MutedText().Render(members))
 				if pickerIdx == m.chatIdx {
-					list.WriteString(theme.Selected().Width(w-2).Render(row) + "\n")
+					list.WriteString(theme.Selected().Render(row) + "\n")
 				} else {
-					list.WriteString(theme.ListItem().Width(w-2).Render(row) + "\n")
+					list.WriteString(theme.ListItem().Render(row) + "\n")
 				}
 			}
 			if end < len(m.chats) {
@@ -1660,21 +1655,25 @@ func (m model) viewChats() string {
 	if m.err != "" {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
-	help := theme.Footer().Width(w).Render("↑↓ · enter · n new · 1-9 · q")
+	help := theme.Footer().Render("↑↓ · enter · n new · 1-9 · q")
 	return lipgloss.JoinVertical(lipgloss.Left, banner, "", hint, sub, "", errLine+list.String(), help)
 }
 
 func (m model) viewNewAI() string {
 	w := max(m.width, 60)
 	banner := theme.Banner(w)
-	hint := "Choose who joins · space selects · enter starts"
+	purpose := "Who should join this chat?"
 	action := "start"
 	if m.aiPurpose == "add" {
-		hint = "Add to this chat · people already here are hidden"
+		purpose = "Who else should join?"
 		action = "add"
 	}
-	hintLine := theme.MutedText().Render(hint)
-	sub := theme.MutedText().Render(m.status)
+	purposeLine := theme.MutedText().Render(purpose)
+	count := strings.TrimSpace(m.status)
+	countLine := ""
+	if count != "" {
+		countLine = theme.MutedText().Render(count)
+	}
 
 	var list strings.Builder
 	if m.chatCreating {
@@ -1706,10 +1705,11 @@ func (m model) viewNewAI() string {
 				if !p.HasAccess {
 					row += theme.MutedText().Render("  (upgrade plan)")
 				}
+				// Keep rows content-width — full-width bars read like repeated footers.
 				if i == m.aiIdx {
-					list.WriteString(theme.Selected().Width(w-2).Render(row) + "\n")
+					list.WriteString(theme.Selected().Render(row) + "\n")
 				} else {
-					list.WriteString(theme.ListItem().Width(w-2).Render(row) + "\n")
+					list.WriteString(theme.ListItem().Render(row) + "\n")
 				}
 			}
 		}
@@ -1718,8 +1718,14 @@ func (m model) viewNewAI() string {
 	if m.err != "" {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
-	help := theme.Footer().Width(w).Render(fmt.Sprintf("space select · enter %s · a all · m more models · esc", action))
-	return lipgloss.JoinVertical(lipgloss.Left, banner, "", hintLine, sub, "", errLine+list.String(), help)
+	// Keys live in exactly one place.
+	help := theme.Footer().Render(fmt.Sprintf("space · enter %s · a all · m more · esc", action))
+	parts := []string{banner, "", purposeLine}
+	if countLine != "" {
+		parts = append(parts, countLine)
+	}
+	parts = append(parts, "", errLine+list.String(), help)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m model) viewRoom() string {
@@ -1739,12 +1745,22 @@ func (m model) viewRoom() string {
 	if m.err != "" {
 		status = m.err
 	}
-	footerBits := []string{"↑↓ scroll history", "enter send", "@mention", "/add AI", "esc"}
+	statusLine := ""
 	if status != "" {
-		footerBits = append([]string{status}, footerBits...)
+		statusLine = theme.MutedText().Render(status)
 	}
-	footer := theme.Footer().Width(w).Render(strings.Join(footerBits, "  ·  "))
-	return lipgloss.JoinVertical(lipgloss.Left, header, people, body, mention, composer, footer)
+	// Keep keys on their own short line so Width wrap doesn't stack a "footer wall".
+	footer := theme.Footer().Render("↑↓ scroll · enter send · @mention · /add · esc")
+	parts := []string{header, people, body}
+	if mention != "" {
+		parts = append(parts, mention)
+	}
+	parts = append(parts, composer)
+	if statusLine != "" {
+		parts = append(parts, statusLine)
+	}
+	parts = append(parts, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m model) renderMentionPicker(w int) string {
