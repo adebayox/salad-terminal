@@ -3,8 +3,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash
 #
-# Downloads a prebuilt binary from GitHub Releases (no Go required).
-# Contributors can force a source build with: SALAD_FORCE_SOURCE=1 ./install.sh
+# Downloads a compressed prebuilt binary from GitHub Releases (no Go required).
+# Contributors: SALAD_FORCE_SOURCE=1 ./install.sh
 set -euo pipefail
 
 REPO="${SALAD_TERMINAL_REPO:-adebayox/salad-terminal}"
@@ -73,28 +73,51 @@ detect_target() {
   echo "${os}-${arch}"
 }
 
+# Resilient download: resume partial transfers, retry CDN blips, show progress.
+# No hard --max-time on the whole file — that killed slow Mac networks mid-download.
+curl_download() {
+  local url="$1"
+  local dest="$2"
+  curl -fL --progress-bar \
+    --connect-timeout 30 \
+    --retry 8 \
+    --retry-all-errors \
+    --retry-max-time 600 \
+    --continue-at - \
+    -o "$dest" \
+    "$url"
+}
+
 download_release_binary() {
   need_cmd curl
-  local target asset url tmp ver
+  need_cmd tar
+  local target archive url tmp ver
   target="$(detect_target)"
-  asset="salad-${target}"
-  url="${BASE_URL}/${asset}"
+  archive="salad-${target}.tar.gz"
+  url="${BASE_URL}/${archive}"
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/salad-terminal.XXXXXX")"
   cleanup() { rm -rf "$tmp"; }
   trap cleanup EXIT
 
   echo "Downloading Salad Terminal (${RELEASE_TAG} / ${target})…"
-  if ! curl -fsSL --connect-timeout 15 --max-time 120 -o "${tmp}/salad" "$url"; then
+  if ! curl_download "$url" "${tmp}/${archive}"; then
     echo "error: could not download ${url}" >&2
     echo >&2
-    echo "Release binaries may still be publishing. Retry in a minute, or build from source:" >&2
+    echo "Check your network and retry. If it keeps failing:" >&2
+    echo "  # optional: build from source" >&2
     echo "  brew install go git" >&2
     echo "  SALAD_FORCE_SOURCE=1 curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash" >&2
     exit 1
   fi
+
+  tar -xzf "${tmp}/${archive}" -C "$tmp"
+  if [[ ! -f "${tmp}/salad" ]]; then
+    echo "error: archive missing salad binary" >&2
+    exit 1
+  fi
   chmod +x "${tmp}/salad"
 
-  ver="$(curl -fsSL --connect-timeout 10 --max-time 30 "${BASE_URL}/VERSION" 2>/dev/null || true)"
+  ver="$(curl -fsSL --connect-timeout 10 --retry 3 --retry-all-errors "${BASE_URL}/VERSION" 2>/dev/null || true)"
   if [[ -z "$ver" ]]; then
     ver="$RELEASE_TAG"
   fi
@@ -140,7 +163,6 @@ if [[ "${SALAD_FORCE_SOURCE:-}" == "1" ]]; then
     fetch_and_build_source
   fi
 elif [[ -n "$SCRIPT_DIR" && -f "${SCRIPT_DIR}/go.mod" && -d "${SCRIPT_DIR}/cmd/salad" && "${SALAD_FORCE_REMOTE:-}" != "1" ]]; then
-  # Local checkout: prefer source build for contributors iterating.
   build_from_dir "$SCRIPT_DIR"
 else
   download_release_binary
