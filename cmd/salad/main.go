@@ -10,6 +10,7 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/chat"
 	"github.com/salad-ai/salad-terminal/internal/config"
 	"github.com/salad-ai/salad-terminal/internal/tui"
+	"github.com/salad-ai/salad-terminal/internal/update"
 	"github.com/salad-ai/salad-terminal/internal/workspace"
 )
 
@@ -27,7 +28,9 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		// Continue last workspace chat when known; otherwise resume picker.
+		if err := ensureLatest(); err != nil {
+			return err
+		}
 		return tui.Run("")
 	}
 	cmd := args[0]
@@ -38,12 +41,25 @@ func run(args []string) error {
 		return nil
 	case "version", "--version", "-v":
 		fmt.Println("salad", Version)
+		if remote, err := update.LatestSHA(); err == nil && remote != "" {
+			if normalize(Version) == remote {
+				fmt.Println("up to date with github.com/adebayox/salad-terminal@main")
+			} else {
+				fmt.Printf("github main is %s (will auto-update on next salad)\n", remote)
+			}
+		}
 		return nil
 	case "update":
 		return runUpdate()
 	case "--resume", "-r":
+		if err := ensureLatest(); err != nil {
+			return err
+		}
 		return tui.RunResume()
 	case "new":
+		if err := ensureLatest(); err != nil {
+			return err
+		}
 		return tui.RunNew()
 	case "login":
 		baseURL := config.BaseURL()
@@ -109,6 +125,9 @@ func run(args []string) error {
 			}
 		}
 		if chatID == "" {
+			if err := ensureLatest(); err != nil {
+				return err
+			}
 			return tui.RunResume()
 		}
 		if err := chat.Resume(chatID); err != nil {
@@ -116,6 +135,9 @@ func run(args []string) error {
 		}
 		if noTUI {
 			return nil
+		}
+		if err := ensureLatest(); err != nil {
+			return err
 		}
 		return tui.Run(chatID)
 	case "say", "send":
@@ -135,7 +157,23 @@ func run(args []string) error {
 	}
 }
 
+func ensureLatest() error {
+	if !update.MaybeAutoUpdate(Version) {
+		return nil
+	}
+	return update.Reexec()
+}
+
+func normalize(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if len(v) > 7 {
+		return v[:7]
+	}
+	return v
+}
+
 func runUpdate() error {
+	os.Setenv("SALAD_SKIP_AUTOUPDATE", "")
 	fmt.Println("Updating Salad Terminal from GitHub…")
 	cmd := exec.Command("bash", "-c", "curl -fsSL "+installURL+" | SALAD_FORCE_REMOTE=1 bash")
 	cmd.Stdout = os.Stdout
@@ -144,6 +182,7 @@ func runUpdate() error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("update failed: %w", err)
 	}
+	fmt.Println("Done. Run salad again (or it will auto-update next launch).")
 	return nil
 }
 
@@ -225,8 +264,8 @@ func printUsage() {
   salad                 Continue last chat for this folder (or open resume picker)
   salad --resume        Pick a Salad chat (↑↓ · enter · n new · 1-9)
   salad new             New chat → pick AIs (Claude, GPT, Gemini…) → create
-  salad update          Pull latest Terminal from GitHub and reinstall
-  salad version         Show installed build
+  salad update          Force update now (also happens automatically on launch)
+  salad version         Show installed build vs GitHub main
   salad resume <id>     Jump straight into a chat
   salad login           Email/password sign-in
   salad login --google  Browser Google OAuth

@@ -10,15 +10,13 @@ curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/instal
 
 Needs Go + git. Puts `salad` on your PATH.
 
-## Get updates
+## Updates (automatic)
 
-Install does **not** auto-update. After we ship changes:
+Like Claude Code: **`salad` auto-updates on launch** when GitHub `main` is newer, then restarts itself.
 
-```bash
-salad update
-```
-
-That pulls latest `main` from GitHub and reinstalls. Check with `salad version`.
+- Opt out: `export SALAD_DISABLE_AUTOUPDATER=1`
+- Force now: `salad update`
+- Check: `salad version`
 
 ## Use
 
