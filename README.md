@@ -12,10 +12,12 @@ curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/instal
 
 | Command | What happens |
 |---|---|
-| `salad` | **New chat** → pick AIs → create |
-| `salad --continue` | Resume last chat for this folder |
-| `salad --resume` | Pick a chat |
+| `salad` | **New chat** (AI picker). Previous conversations listed on the same screen. |
+| `salad --continue` / `-c` | Resume last chat for this folder |
+| `salad --resume` / `-r` | Full previous-conversations picker |
 | `salad new` | Same as `salad` |
+
+On the new-chat entry: `1-3` open a recent chat · `c` continue this folder · `r` see all · `enter` start new.
 
 ## Updates
 
@@ -28,7 +30,6 @@ salad login
 salad
 ```
 
-In a chat: `@` mention · `/add` more AIs · `/resume` · `esc` · `q`  
-AI picker: `space` toggle · `enter` · `m` more models  
+In a chat: `@` mention · `/add` · `/resume` · `/new` · `esc` · `q`
 
 Default API: staging (`https://api-staging.salad.ink`)

@@ -381,7 +381,9 @@ func (m *model) beginNewChat() tea.Cmd {
 	m.chatCreating = false
 	m.status = ""
 	m.err = ""
-	return loadAIProductsCmd(m.client)
+	// Prefetch previous conversations so the entry screen can show them (Claude --resume surface).
+	m.chatLoad = true
+	return tea.Batch(loadAIProductsCmd(m.client), loadChatsCmd(m.client))
 }
 
 func (m *model) beginAddAI() tea.Cmd {
@@ -534,7 +536,7 @@ func (m *model) openSelectedChat(id, title string) tea.Cmd {
 
 func (m *model) showResumePicker(status string) tea.Cmd {
 	m.screen = screenChats
-	m.status = status
+	m.status = firstNonEmpty(status, "Previous conversations · enter open · n new")
 	m.chatLoad = true
 	m.pickerInited = false
 	m.chatIdx = 0
@@ -755,10 +757,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatsMsg:
 		m.chatLoad = false
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			// On the new-chat entry, previous chats are optional chrome — don't block AI pick.
+			if m.screen != screenNewAI {
+				m.err = msg.err.Error()
+			}
 			return m, nil
 		}
 		m.chats = msg.chats
+		if m.screen == screenNewAI {
+			return m, nil
+		}
 		m.err = ""
 		maxIdx := len(m.chats) // 0 = New, 1..len = chats
 		if !m.pickerInited {
@@ -773,7 +781,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatIdx = maxIdx
 		}
 		if len(m.chats) == 0 {
-			m.status = "No chats yet — n to start one"
+			m.status = "No previous conversations yet — n for new"
 		} else {
 			m.status = ""
 		}
@@ -1149,7 +1157,22 @@ func (m model) updateNewAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.forceResume = true
-		return m, m.showResumePicker("↑↓ open a chat · n new")
+		return m, m.showResumePicker("Previous conversations · enter open · n new")
+	case "r":
+		if m.aiPurpose == "add" {
+			return m, nil
+		}
+		// Claude: claude --resume / /resume
+		return m, m.showResumePicker("Previous conversations · enter open · n new")
+	case "c":
+		if m.aiPurpose == "add" {
+			return m, nil
+		}
+		// Claude: claude --continue
+		if id, title := resolveContinueChat(m.workspaceDir); id != "" {
+			return m, m.openSelectedChat(id, title)
+		}
+		return m, m.showResumePicker("No chat for this folder yet · enter open · n new")
 	case "up", "k":
 		if m.aiIdx > 0 {
 			m.aiIdx--
@@ -1214,9 +1237,15 @@ func (m model) updateNewAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.composer.Focus()
 		m.refreshViewport()
 		return m, createChatAndOpenCmd(m.client, m.workspaceDir, slugs)
-	case "r":
-		m.aiLoad = true
-		return m, loadAIProductsCmd(m.client)
+	case "1", "2", "3":
+		if m.aiPurpose == "add" {
+			return m, nil
+		}
+		n, _ := strconv.Atoi(msg.String())
+		if n >= 1 && n <= len(m.chats) && n <= 3 {
+			selected := m.chats[n-1]
+			return m, m.openSelectedChat(selected.ID, firstNonEmpty(selected.Title, "Untitled"))
+		}
 	}
 	return m, nil
 }
@@ -1763,7 +1792,7 @@ func (m model) viewLogin() string {
 func (m model) viewChats() string {
 	w := max(m.width, 60)
 	banner := theme.Banner(w)
-	hint := theme.MutedText().Render("Your chats · enter to open · n for new")
+	hint := theme.MutedText().Render("Previous conversations · enter to open · n new")
 	sub := theme.MutedText().Render(m.status)
 
 	var list strings.Builder
@@ -1838,14 +1867,14 @@ func (m model) viewChats() string {
 	if m.err != "" {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
-	help := theme.Footer().Render("↑↓ · enter · n new · 1-9 · q")
+	help := theme.Footer().Render("↑↓ · enter open · n new · 1-9 · q")
 	return lipgloss.JoinVertical(lipgloss.Left, banner, "", hint, sub, "", errLine+list.String(), help)
 }
 
 func (m model) viewNewAI() string {
 	w := max(m.width, 60)
 	banner := theme.Banner(w)
-	purpose := "Who should join this chat?"
+	purpose := "New chat — who should join?"
 	action := "start"
 	if m.aiPurpose == "add" {
 		purpose = "Who else should join?"
@@ -1860,7 +1889,7 @@ func (m model) viewNewAI() string {
 
 	var list strings.Builder
 	if m.chatCreating {
-		list.WriteString(theme.MutedText().Render("Working…"))
+		list.WriteString(theme.MutedText().Render("Adding…"))
 	} else if m.aiLoad {
 		list.WriteString(theme.MutedText().Render("Loading…"))
 	} else {
@@ -1888,7 +1917,6 @@ func (m model) viewNewAI() string {
 				if !p.HasAccess {
 					row += theme.MutedText().Render("  (upgrade plan)")
 				}
-				// Keep rows content-width — full-width bars read like repeated footers.
 				if i == m.aiIdx {
 					list.WriteString(theme.Selected().Render(row) + "\n")
 				} else {
@@ -1897,18 +1925,80 @@ func (m model) viewNewAI() string {
 			}
 		}
 	}
+
+	recent := ""
+	if m.aiPurpose == "create" {
+		recent = m.renderRecentChats(3)
+	}
+
 	errLine := ""
 	if m.err != "" {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
-	// Keys live in exactly one place.
-	help := theme.Footer().Render(fmt.Sprintf("space · enter %s · a all · m more · esc", action))
+	help := theme.Footer().Render(fmt.Sprintf("space · enter %s · c continue · r previous · m more · esc", action))
+	if m.aiPurpose == "add" {
+		help = theme.Footer().Render(fmt.Sprintf("space · enter %s · m more · esc", action))
+	}
 	parts := []string{banner, "", purposeLine}
 	if countLine != "" {
 		parts = append(parts, countLine)
 	}
-	parts = append(parts, "", errLine+list.String(), help)
+	parts = append(parts, "", errLine+list.String())
+	if recent != "" {
+		parts = append(parts, "", recent)
+	}
+	parts = append(parts, help)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func (m model) renderRecentChats(limit int) string {
+	if limit < 1 || len(m.chats) == 0 {
+		if m.chatLoad {
+			return theme.MutedText().Render("Previous conversations…")
+		}
+		return theme.MutedText().Render("Previous conversations · r to browse · salad --resume")
+	}
+	var b strings.Builder
+	b.WriteString(theme.MutedText().Render("Previous conversations") + "\n")
+	n := min(limit, len(m.chats))
+	for i := 0; i < n; i++ {
+		chat := m.chats[i]
+		title := displayChatTitle(firstNonEmpty(chat.Title, "Untitled"))
+		if len(title) > 42 {
+			title = title[:39] + "…"
+		}
+		when := relativeTime(chat.UpdatedAt)
+		row := fmt.Sprintf("  %d. %s", i+1, title)
+		if when != "" {
+			row += theme.MutedText().Render("  ·  "+when)
+		}
+		b.WriteString(theme.ListItem().Render(row) + "\n")
+	}
+	if len(m.chats) > n {
+		b.WriteString(theme.MutedText().Render(fmt.Sprintf("  r see all %d · c last in this folder", len(m.chats))) + "\n")
+	} else {
+		b.WriteString(theme.MutedText().Render("  1-3 open · r see all · c last in this folder") + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return t.Local().Format("Jan 2")
+	}
 }
 
 func (m model) viewRoom() string {
@@ -1933,7 +2023,7 @@ func (m model) viewRoom() string {
 		statusLine = theme.MutedText().Render(status)
 	}
 	// Keep keys on their own short line so Width wrap doesn't stack a "footer wall".
-	footer := theme.Footer().Render("↑↓ scroll · enter send · @mention · /add · esc")
+	footer := theme.Footer().Render("↑↓ scroll · enter send · @mention · /add · /resume · esc")
 	parts := []string{header, people, body}
 	if mention != "" {
 		parts = append(parts, mention)

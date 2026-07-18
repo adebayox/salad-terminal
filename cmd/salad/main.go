@@ -270,9 +270,9 @@ func printUsage() {
 	fmt.Printf(`
 same Salad chats, in your repo  (%s)
 
-  salad                 New chat (pick AIs) — same as Claude Code bare launch
-  salad --continue      Resume last chat for this folder
-  salad --resume        Pick a chat
+  salad                 New chat (like Claude Code). Previous chats listed on screen.
+  salad --continue, -c  Resume last chat for this folder
+  salad --resume, -r    Previous conversations picker
   salad new             Same as bare salad
   salad update          Force update now (also auto on launch)
   salad version         Show installed build vs GitHub main
@@ -284,8 +284,8 @@ same Salad chats, in your repo  (%s)
   salad say <message>   Quick send to active chat
   salad workspace …     Local trust / read / git / permissions
 
-In a chat: @ mention · /add AI · /new · /resume · esc · q
-AI picker: space · enter · a select all · m more models
+On new-chat entry: 1-3 open recent · c continue · r previous · enter start
+In a chat: @ mention · /add · /new · /resume · esc · q
 Default API: staging (https://api-staging.salad.ink)
 `, Version)
 }
