@@ -367,8 +367,14 @@ func (c *Client) ChatBootstrap(ctx context.Context, chatID string) (*ChatBootstr
 	return out, nil
 }
 
-func (c *Client) ListMessages(ctx context.Context, chatID string) ([]ChatMessage, error) {
-	payload, err := c.do(ctx, http.MethodGet, "/api/chats/"+chatID+"/messages", nil)
+// ListMessages fetches chat history (newest page, chronological).
+// limit defaults to 100 (API max). beforeMessageID loads older messages.
+func (c *Client) ListMessages(ctx context.Context, chatID string, beforeMessageID string) ([]ChatMessage, error) {
+	path := fmt.Sprintf("/api/chats/%s/messages?limit=100", chatID)
+	if before := strings.TrimSpace(beforeMessageID); before != "" {
+		path += "&before=" + before
+	}
+	payload, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}

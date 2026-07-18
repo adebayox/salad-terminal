@@ -122,7 +122,7 @@ func Resume(chatID string) error {
 		return nil
 	}
 
-	messages, msgErr := client.ListMessages(ctx, chatID)
+	messages, msgErr := client.ListMessages(ctx, chatID, "")
 	if msgErr == nil {
 		printRecent(messages, 12)
 	}

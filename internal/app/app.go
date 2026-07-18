@@ -160,7 +160,7 @@ func RunOptions(opts Options) error {
 	// SALAD_SIMPLE=1 keeps output in the normal screen buffer so Cursor/agent
 	// terminals can display the session (alt-screen needs a real interactive TTY).
 	if os.Getenv("SALAD_SIMPLE") == "" {
-		programOpts = append(programOpts, tea.WithAltScreen())
+		programOpts = append(programOpts, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	}
 	p := tea.NewProgram(m, programOpts...)
 	finalModel, err := p.Run()
@@ -232,6 +232,10 @@ func openRoomCmd(client *api.Client, chatID string) tea.Cmd {
 			title = firstNonEmpty(boot.Chat.Title, boot.Chat.Name, chatID)
 			messages = boot.Messages
 		}
+		// Prefer full messages API (up to 100) over bootstrap's last-50 window.
+		if listed, listErr := client.ListMessages(ctx, chatID, ""); listErr == nil && len(listed) > 0 {
+			messages = listed
+		}
 		members := loadMembers(ctx, client, chatID, boot)
 		if err != nil && len(messages) == 0 {
 			return roomMsg{err: err}
@@ -239,6 +243,17 @@ func openRoomCmd(client *api.Client, chatID string) tea.Cmd {
 		_ = config.SaveActiveChat(&config.ActiveChat{ChatID: chatID, Title: title})
 		return roomMsg{title: title, messages: messages, members: members}
 	}
+}
+
+func fetchRoomMessages(ctx context.Context, client *api.Client, chatID string) ([]api.ChatMessage, error) {
+	if listed, err := client.ListMessages(ctx, chatID, ""); err == nil && len(listed) > 0 {
+		return listed, nil
+	}
+	boot, err := client.ChatBootstrap(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	return boot.Messages, nil
 }
 
 func createChatCmd(client *api.Client, workspaceDir string, aiSlugs []string) tea.Cmd {
@@ -298,7 +313,7 @@ func (m *model) beginNewChat() tea.Cmd {
 	m.aiShowMore = false
 	m.aiSelected = map[string]bool{}
 	m.chatCreating = false
-	m.status = "Space to toggle · enter to create"
+	m.status = "Space to select · enter to start"
 	m.err = ""
 	return loadAIProductsCmd(m.client)
 }
@@ -311,7 +326,7 @@ func (m *model) beginAddAI() tea.Cmd {
 	m.aiShowMore = false
 	m.aiSelected = map[string]bool{}
 	m.chatCreating = false
-	m.status = "Pick AIs to add · space toggle · enter add"
+	m.status = "Pick who to add · space to select · enter to add"
 	m.err = ""
 	return loadAIProductsCmd(m.client)
 }
@@ -395,18 +410,17 @@ func applyDefaultAISelection(products []api.AIProduct) map[string]bool {
 			avail[p.Slug] = p
 		}
 	}
+	// Start with one AI (like Claude Code / Codex). Space selects more; a selects all.
 	for _, slug := range defaultAIProductSlugs {
 		if _, ok := avail[slug]; ok {
 			selected[slug] = true
+			return selected
 		}
 	}
-	if len(selected) == 0 {
-		// Fallback: first accessible chat model.
-		for _, p := range products {
-			if p.HasAccess && strings.EqualFold(p.Category, "chat") {
-				selected[p.Slug] = true
-				break
-			}
+	for _, p := range products {
+		if p.HasAccess && strings.EqualFold(p.Category, "chat") {
+			selected[p.Slug] = true
+			break
 		}
 	}
 	return selected
@@ -522,11 +536,11 @@ func pollCmd(client *api.Client, chatID string) tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		boot, err := client.ChatBootstrap(ctx, chatID)
+		messages, err := fetchRoomMessages(ctx, client, chatID)
 		if err != nil {
 			return pollMsg{err: err}
 		}
-		return pollMsg{messages: boot.Messages}
+		return pollMsg{messages: messages}
 	})
 }
 
@@ -657,9 +671,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.aiIdx = 0
 		visible := m.visibleAIProducts()
 		if m.aiPurpose == "add" {
-			m.status = fmt.Sprintf("%d available · space to pick · enter to add", len(visible))
+			m.status = fmt.Sprintf("%d available · space to select · enter to add", len(visible))
 		} else {
-			m.status = fmt.Sprintf("%d selected · space toggle · enter create", len(m.selectedAISlugs()))
+			m.status = fmt.Sprintf("%d selected · space to select more · enter to start", len(m.selectedAISlugs()))
 		}
 		m.err = ""
 		return m, nil
@@ -752,12 +766,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = ""
 		if msg.msg != nil {
-			m.messages = append(m.messages, *msg.msg)
-			m.refreshViewport()
+			m.applyMessages([]api.ChatMessage{*msg.msg})
 			m.viewport.GotoBottom()
 		}
-		m.status = "Sent · waiting for collaborators…"
+		m.status = "Sent · waiting for replies…"
 		return m, refreshRoomCmd(m.client, m.chatID)
+
+	case tea.MouseMsg:
+		if m.screen != screenRoom {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.viewport.LineUp(3)
+		case tea.MouseButtonWheelDown:
+			m.viewport.LineDown(3)
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		switch m.screen {
@@ -778,32 +803,103 @@ func refreshRoomCmd(client *api.Client, chatID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		boot, err := client.ChatBootstrap(ctx, chatID)
+		messages, err := fetchRoomMessages(ctx, client, chatID)
 		if err != nil {
 			return pollMsg{err: err}
 		}
-		return pollMsg{messages: boot.Messages}
+		return pollMsg{messages: messages}
 	}
 }
 
-func (m *model) applyMessages(messages []api.ChatMessage) {
-	if len(messages) == 0 {
+func loadOlderMessagesCmd(client *api.Client, chatID, beforeID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		messages, err := client.ListMessages(ctx, chatID, beforeID)
+		if err != nil {
+			return pollMsg{err: err}
+		}
+		return pollMsg{messages: messages}
+	}
+}
+
+func messageKey(msg api.ChatMessage) string {
+	if id := strings.TrimSpace(msg.ID); id != "" {
+		return id
+	}
+	return fmt.Sprintf("local:%s:%s:%d", msg.AuthorName, msg.Body, msg.CreatedAt.UnixNano())
+}
+
+func preferMessage(a, b api.ChatMessage) api.ChatMessage {
+	// Prefer the fuller / more complete version of the same message.
+	out := b
+	if len(strings.TrimSpace(a.Body)) > len(strings.TrimSpace(b.Body)) {
+		out = a
+		out.Status = firstNonEmpty(b.Status, a.Status)
+	}
+	if out.AuthorName == "" {
+		out.AuthorName = a.AuthorName
+	}
+	if out.CreatedAt.IsZero() {
+		out.CreatedAt = a.CreatedAt
+	}
+	return out
+}
+
+func mergeMessages(existing, incoming []api.ChatMessage) []api.ChatMessage {
+	byID := make(map[string]api.ChatMessage, len(existing)+len(incoming))
+	for _, msg := range existing {
+		byID[messageKey(msg)] = msg
+	}
+	for _, msg := range incoming {
+		key := messageKey(msg)
+		if prev, ok := byID[key]; ok {
+			byID[key] = preferMessage(prev, msg)
+		} else {
+			byID[key] = msg
+		}
+	}
+	out := make([]api.ChatMessage, 0, len(byID))
+	for _, msg := range byID {
+		out = append(out, msg)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func messagesChanged(a, b []api.ChatMessage) bool {
+	if len(a) != len(b) {
+		return true
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].Body != b[i].Body || a[i].Status != b[i].Status {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *model) applyMessages(incoming []api.ChatMessage) {
+	if len(incoming) == 0 {
 		return
 	}
-	changed := len(messages) != len(m.messages)
-	if !changed && len(m.messages) > 0 {
-		last := m.messages[len(m.messages)-1]
-		next := messages[len(messages)-1]
-		changed = last.ID != next.ID || last.Body != next.Body
-	}
-	if !changed {
+	merged := mergeMessages(m.messages, incoming)
+	if !messagesChanged(m.messages, merged) {
 		return
 	}
 	atBottom := m.viewport.AtBottom()
-	m.messages = messages
+	yOffset := m.viewport.YOffset
+	m.messages = merged
 	m.refreshViewport()
 	if atBottom {
 		m.viewport.GotoBottom()
+	} else {
+		m.viewport.SetYOffset(yOffset)
 	}
 }
 
@@ -940,24 +1036,21 @@ func (m model) updateNewAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.aiSelected[p.Slug] = !m.aiSelected[p.Slug]
 		m.err = ""
-		action := "create"
+		action := "start"
 		if m.aiPurpose == "add" {
 			action = "add"
 		}
-		m.status = fmt.Sprintf("%d selected · enter to %s", len(m.selectedAISlugs()), action)
+		n := len(m.selectedAISlugs())
+		m.status = fmt.Sprintf("%d selected · space to change · enter to %s", n, action)
 	case "a":
-		if m.aiPurpose == "add" {
-			// Select all visible defaults / more list.
-			m.aiSelected = map[string]bool{}
-			for _, p := range visible {
-				if p.HasAccess {
-					m.aiSelected[p.Slug] = true
-				}
+		// Select all currently visible AIs.
+		m.aiSelected = map[string]bool{}
+		for _, p := range visible {
+			if p.HasAccess {
+				m.aiSelected[p.Slug] = true
 			}
-		} else {
-			m.aiSelected = applyDefaultAISelection(m.aiProducts)
 		}
-		m.status = fmt.Sprintf("%d selected", len(m.selectedAISlugs()))
+		m.status = fmt.Sprintf("%d selected · enter to start", len(m.selectedAISlugs()))
 		m.err = ""
 	case "m":
 		m.aiShowMore = !m.aiShowMore
@@ -993,6 +1086,8 @@ func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateMention(msg)
 	}
 
+	composerEmpty := strings.TrimSpace(m.composer.Value()) == ""
+
 	switch msg.String() {
 	case "ctrl+c":
 		if m.wsClient != nil {
@@ -1001,7 +1096,7 @@ func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "q":
 		// Quit only when composer is empty — otherwise type "q".
-		if strings.TrimSpace(m.composer.Value()) == "" {
+		if composerEmpty {
 			if m.wsClient != nil {
 				m.wsClient.Close()
 			}
@@ -1017,11 +1112,36 @@ func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.attachTools = !m.attachTools
 		if m.attachTools {
-			m.status = "Local tools attached on send"
+			m.status = "Local tools on for next send"
 		} else {
-			m.status = "Local tools off for next sends"
+			m.status = "Local tools off for next send"
 		}
 		return m, nil
+	case "pgup", "ctrl+u":
+		wasTop := m.viewport.AtTop()
+		m.viewport.HalfViewUp()
+		if wasTop || m.viewport.AtTop() {
+			return m, m.requestOlderMessages()
+		}
+		return m, nil
+	case "pgdown", "ctrl+d":
+		m.viewport.HalfViewDown()
+		return m, nil
+	case "up":
+		// Empty composer: ↑ scrolls history (don't trap keys in the textarea).
+		if composerEmpty {
+			wasTop := m.viewport.AtTop()
+			m.viewport.LineUp(1)
+			if wasTop || m.viewport.AtTop() {
+				return m, m.requestOlderMessages()
+			}
+			return m, nil
+		}
+	case "down":
+		if composerEmpty {
+			m.viewport.LineDown(1)
+			return m, nil
+		}
 	case "enter":
 		return m.sendComposer()
 	}
@@ -1054,9 +1174,19 @@ func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.mentionOpen = false
-	var vpCmd tea.Cmd
-	m.viewport, vpCmd = m.viewport.Update(msg)
-	return m, tea.Batch(cmd, vpCmd)
+	return m, cmd
+}
+
+func (m *model) requestOlderMessages() tea.Cmd {
+	if m.client == nil || m.chatID == "" || len(m.messages) == 0 {
+		return nil
+	}
+	oldestID := strings.TrimSpace(m.messages[0].ID)
+	if oldestID == "" {
+		return nil
+	}
+	m.status = "Loading earlier messages…"
+	return loadOlderMessagesCmd(m.client, m.chatID, oldestID)
 }
 
 func (m model) updateMention(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1536,15 +1666,13 @@ func (m model) viewChats() string {
 
 func (m model) viewNewAI() string {
 	w := max(m.width, 60)
-	heading := "New chat"
-	hint := "Choose who joins · space toggles · enter creates"
-	action := "create"
+	banner := theme.Banner(w)
+	hint := "Choose who joins · space selects · enter starts"
+	action := "start"
 	if m.aiPurpose == "add" {
-		heading = "Add AIs"
-		hint = "Add to this chat · already-joined AIs are hidden"
+		hint = "Add to this chat · people already here are hidden"
 		action = "add"
 	}
-	title := theme.Header().Width(w).Render(theme.Mark() + "  ·  " + heading)
 	hintLine := theme.MutedText().Render(hint)
 	sub := theme.MutedText().Render(m.status)
 
@@ -1590,8 +1718,8 @@ func (m model) viewNewAI() string {
 	if m.err != "" {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
-	help := theme.Footer().Width(w).Render(fmt.Sprintf("space toggle · enter %s · a select all · m more models · esc", action))
-	return lipgloss.JoinVertical(lipgloss.Left, title, hintLine, sub, "", errLine+list.String(), help)
+	help := theme.Footer().Width(w).Render(fmt.Sprintf("space select · enter %s · a all · m more models · esc", action))
+	return lipgloss.JoinVertical(lipgloss.Left, banner, "", hintLine, sub, "", errLine+list.String(), help)
 }
 
 func (m model) viewRoom() string {
@@ -1611,7 +1739,7 @@ func (m model) viewRoom() string {
 	if m.err != "" {
 		status = m.err
 	}
-	footerBits := []string{"enter send", "@ mention", "/add AI", "esc"}
+	footerBits := []string{"↑↓ scroll history", "enter send", "@mention", "/add AI", "esc"}
 	if status != "" {
 		footerBits = append([]string{status}, footerBits...)
 	}
