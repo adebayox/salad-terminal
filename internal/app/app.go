@@ -77,7 +77,8 @@ type model struct {
 	aiSelected map[string]bool
 	aiIdx      int
 	aiLoad     bool
-	aiShowAll  bool // include image/video products
+	aiShowMore bool   // false = family defaults only; true = full chat catalog
+	aiPurpose  string // "create" | "add"
 
 	chatID       string
 	chatTitle    string
@@ -141,6 +142,10 @@ type (
 		products []api.AIProduct
 		err      error
 	}
+	addedAIsMsg struct {
+		count int
+		err   error
+	}
 )
 
 func Run(initialChatID string) error {
@@ -167,7 +172,7 @@ func RunOptions(opts Options) error {
 
 func newModel(opts Options) model {
 	ta := textarea.New()
-	ta.Placeholder = "Message…  @ to mention · /git /read · /new · enter send"
+	ta.Placeholder = "Message…  @mention · /add for more AIs"
 	ta.ShowLineNumbers = false
 	ta.Prompt = "∬ "
 	ta.CharLimit = 8000
@@ -242,6 +247,26 @@ func createChatCmd(client *api.Client, workspaceDir string, aiSlugs []string) te
 	}
 }
 
+func addAIsCmd(client *api.Client, chatID string, aiSlugs []string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		added := 0
+		var lastErr error
+		for _, slug := range aiSlugs {
+			if err := client.AddAIMember(ctx, chatID, slug); err != nil {
+				lastErr = err
+				continue
+			}
+			added++
+		}
+		if added == 0 && lastErr != nil {
+			return addedAIsMsg{err: lastErr}
+		}
+		return addedAIsMsg{count: added, err: lastErr}
+	}
+}
+
 func loadAIProductsCmd(client *api.Client) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -264,51 +289,87 @@ var defaultAIProductSlugs = []string{
 
 func (m *model) beginNewChat() tea.Cmd {
 	m.screen = screenNewAI
+	m.aiPurpose = "create"
 	m.aiLoad = true
 	m.aiIdx = 0
-	m.aiShowAll = false
+	m.aiShowMore = false
 	m.aiSelected = map[string]bool{}
 	m.chatCreating = false
-	m.status = "Pick AIs for the new Salad chat"
+	m.status = "Space to toggle · enter to create"
 	m.err = ""
 	return loadAIProductsCmd(m.client)
 }
 
-func (m *model) visibleAIProducts() []api.AIProduct {
-	out := make([]api.AIProduct, 0, len(m.aiProducts))
-	for _, p := range m.aiProducts {
-		if !m.aiShowAll && !strings.EqualFold(p.Category, "chat") {
+func (m *model) beginAddAI() tea.Cmd {
+	m.screen = screenNewAI
+	m.aiPurpose = "add"
+	m.aiLoad = true
+	m.aiIdx = 0
+	m.aiShowMore = false
+	m.aiSelected = map[string]bool{}
+	m.chatCreating = false
+	m.status = "Pick AIs to add · space toggle · enter add"
+	m.err = ""
+	return loadAIProductsCmd(m.client)
+}
+
+func (m *model) existingAISlugSet() map[string]bool {
+	out := map[string]bool{}
+	for _, mem := range m.members {
+		if !strings.EqualFold(mem.MemberType, "ai") && !strings.EqualFold(mem.MemberType, "app") {
 			continue
 		}
-		out = append(out, p)
+		if s := strings.ToLower(strings.TrimSpace(mem.Slug)); s != "" {
+			out[s] = true
+		}
+		// Display names like "GPT-5.4" → try common slug forms
+		if s := slugify(mem.DisplayName); s != "" {
+			out[s] = true
+		}
 	}
-	// Selected / default AIs first so Claude/GPT/Gemini/Grok aren't buried.
-	rank := map[string]int{}
-	for i, slug := range defaultAIProductSlugs {
-		rank[slug] = i
+	return out
+}
+
+func (m *model) visibleAIProducts() []api.AIProduct {
+	bySlug := map[string]api.AIProduct{}
+	for _, p := range m.aiProducts {
+		bySlug[p.Slug] = p
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		si, sj := out[i].Slug, out[j].Slug
-		selI, selJ := m.aiSelected[si], m.aiSelected[sj]
-		if selI != selJ {
-			return selI
+	existing := map[string]bool{}
+	if m.aiPurpose == "add" {
+		existing = m.existingAISlugSet()
+	}
+
+	var out []api.AIProduct
+	if !m.aiShowMore {
+		// Family defaults only (same as web new-chat default versions).
+		for _, slug := range defaultAIProductSlugs {
+			p, ok := bySlug[slug]
+			if !ok {
+				continue
+			}
+			if existing[strings.ToLower(slug)] {
+				continue
+			}
+			out = append(out, p)
 		}
-		ri, okI := rank[si]
-		rj, okJ := rank[sj]
-		if okI && okJ {
-			return ri < rj
+	} else {
+		for _, p := range m.aiProducts {
+			if !strings.EqualFold(p.Category, "chat") {
+				continue
+			}
+			if existing[strings.ToLower(p.Slug)] {
+				continue
+			}
+			out = append(out, p)
 		}
-		if okI != okJ {
-			return okI
-		}
-		if out[i].HasAccess != out[j].HasAccess {
-			return out[i].HasAccess
-		}
-		if out[i].Provider != out[j].Provider {
-			return out[i].Provider < out[j].Provider
-		}
-		return out[i].DisplayName < out[j].DisplayName
-	})
+		sort.SliceStable(out, func(i, j int) bool {
+			if out[i].Provider != out[j].Provider {
+				return out[i].Provider < out[j].Provider
+			}
+			return out[i].DisplayName < out[j].DisplayName
+		})
+	}
 	return out
 }
 
@@ -351,13 +412,19 @@ func applyDefaultAISelection(products []api.AIProduct) map[string]bool {
 func defaultTerminalChatName(workspaceDir string) string {
 	base := filepath.Base(filepath.Clean(workspaceDir))
 	if base == "" || base == "." || base == string(filepath.Separator) {
-		base = "Terminal"
+		base = "New chat"
 	}
-	name := base + " · Terminal"
-	if len(name) > 100 {
-		name = name[:100]
+	if len(base) > 100 {
+		base = base[:100]
 	}
-	return name
+	return base
+}
+
+func displayChatTitle(title string) string {
+	t := strings.TrimSpace(title)
+	t = strings.TrimSuffix(t, " · Terminal")
+	t = strings.TrimSpace(t)
+	return firstNonEmpty(t, "Chat")
 }
 
 func resolveContinueChat(workspaceDir string) (chatID, title string) {
@@ -552,9 +619,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatIdx = maxIdx
 		}
 		if len(m.chats) == 0 {
-			m.status = "No chats yet — press enter or n to create one on Salad"
+			m.status = "No chats yet — n to start one"
 		} else {
-			m.status = fmt.Sprintf("%d Salad chats · same list as web", len(m.chats))
+			m.status = ""
 		}
 		return m, nil
 
@@ -566,12 +633,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.aiProducts = msg.products
-		m.aiSelected = applyDefaultAISelection(msg.products)
+		if m.aiPurpose == "add" {
+			m.aiSelected = map[string]bool{}
+		} else {
+			m.aiSelected = applyDefaultAISelection(msg.products)
+		}
 		m.aiIdx = 0
 		visible := m.visibleAIProducts()
-		m.status = fmt.Sprintf("%d AIs · %d selected · space toggle · enter create", len(visible), len(m.selectedAISlugs()))
+		if m.aiPurpose == "add" {
+			m.status = fmt.Sprintf("%d available · space to pick · enter to add", len(visible))
+		} else {
+			m.status = fmt.Sprintf("%d selected · space toggle · enter create", len(m.selectedAISlugs()))
+		}
 		m.err = ""
 		return m, nil
+
+	case addedAIsMsg:
+		m.chatCreating = false
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			m.status = "Could not add AIs"
+			return m, nil
+		}
+		m.screen = screenRoom
+		m.status = fmt.Sprintf("Added %d AI(s) — @mention them", msg.count)
+		m.err = ""
+		return m, openRoomCmd(m.client, m.chatID)
 
 	case createdChatMsg:
 		m.chatCreating = false
@@ -594,7 +681,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messages = msg.messages
 		m.members = msg.members
 		m.err = ""
-		m.status = "Live · same thread as Salad web"
+		m.status = ""
 		_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
 		m.composer.Focus()
 		m.refreshViewport()
@@ -609,19 +696,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wsClient = msg.client
 		m.wsEvents = msg.ch
 		m.live = "ws"
-		// Never clobber picker / login copy with transport status.
-		if m.screen == screenRoom {
-			m.status = "Live · websocket"
-		}
 		return m, nextWSCmd(m.wsEvents)
 
 	case wsReadyMsg:
 		if !msg.ok {
 			m.live = "poll"
 			m.wsEvents = nil
-			if msg.err != nil && m.screen == screenRoom {
-				m.status = "Live · polling (ws unavailable)"
-			}
 			return m, nil
 		}
 		return m, nil
@@ -813,8 +893,15 @@ func (m model) updateNewAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "esc":
+		if m.aiPurpose == "add" {
+			m.screen = screenRoom
+			m.status = ""
+			m.err = ""
+			m.composer.Focus()
+			return m, nil
+		}
 		m.forceResume = true
-		return m, m.showResumePicker("Resume another Salad chat · n new · enter open")
+		return m, m.showResumePicker("↑↓ open a chat · n new")
 	case "up", "k":
 		if m.aiIdx > 0 {
 			m.aiIdx--
@@ -837,40 +924,46 @@ func (m model) updateNewAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.aiSelected[p.Slug] = !m.aiSelected[p.Slug]
 		m.err = ""
-		m.status = fmt.Sprintf("%d selected · space toggle · enter create", len(m.selectedAISlugs()))
+		action := "create"
+		if m.aiPurpose == "add" {
+			action = "add"
+		}
+		m.status = fmt.Sprintf("%d selected · enter to %s", len(m.selectedAISlugs()), action)
 	case "a":
-		m.aiSelected = applyDefaultAISelection(m.aiProducts)
-		m.status = fmt.Sprintf("Defaults · %d selected", len(m.selectedAISlugs()))
-		m.err = ""
-	case "A":
-		// Select every accessible chat AI currently visible.
-		if m.aiSelected == nil {
+		if m.aiPurpose == "add" {
+			// Select all visible defaults / more list.
 			m.aiSelected = map[string]bool{}
-		}
-		for _, p := range visible {
-			if p.HasAccess {
-				m.aiSelected[p.Slug] = true
+			for _, p := range visible {
+				if p.HasAccess {
+					m.aiSelected[p.Slug] = true
+				}
 			}
+		} else {
+			m.aiSelected = applyDefaultAISelection(m.aiProducts)
 		}
-		m.status = fmt.Sprintf("All accessible · %d selected", len(m.selectedAISlugs()))
+		m.status = fmt.Sprintf("%d selected", len(m.selectedAISlugs()))
 		m.err = ""
-	case "i":
-		m.aiShowAll = !m.aiShowAll
+	case "m":
+		m.aiShowMore = !m.aiShowMore
 		m.aiIdx = 0
-		mode := "chat AIs"
-		if m.aiShowAll {
-			mode = "all categories"
+		if m.aiShowMore {
+			m.status = "All chat models · m for defaults only"
+		} else {
+			m.status = "Family defaults · m for more models"
 		}
-		m.status = fmt.Sprintf("Showing %s · %d AIs", mode, len(m.visibleAIProducts()))
 	case "enter":
 		slugs := m.selectedAISlugs()
 		if len(slugs) == 0 {
-			m.err = "Pick at least one AI (space to toggle)"
+			m.err = "Pick at least one AI (space)"
 			return m, nil
 		}
 		m.chatCreating = true
-		m.status = fmt.Sprintf("Creating Salad chat with %d AIs…", len(slugs))
 		m.err = ""
+		if m.aiPurpose == "add" {
+			m.status = "Adding…"
+			return m, addAIsCmd(m.client, m.chatID, slugs)
+		}
+		m.status = "Creating…"
 		return m, createChatCmd(m.client, m.workspaceDir, slugs)
 	case "r":
 		m.aiLoad = true
@@ -1088,12 +1181,14 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("attachTools=%v", m.attachTools)
 	case "new":
 		return m, m.beginNewChat()
+	case "add":
+		return m, m.beginAddAI()
 	case "resume", "chats":
 		m.composer.Blur()
 		m.forceResume = true
-		return m, m.showResumePicker("Resume another Salad chat · n new · enter open")
+		return m, m.showResumePicker("↑↓ open a chat · n new")
 	default:
-		m.err = "commands: /git /diff /read <path> /trust /tools /new /resume"
+		m.err = "try /add · /new · /resume · /git · /read · /trust"
 	}
 	return m, nil
 }
@@ -1344,30 +1439,21 @@ func (m model) viewLogin() string {
 
 func (m model) viewChats() string {
 	w := max(m.width, 60)
-	who := ""
-	if m.creds != nil {
-		who = firstNonEmpty(m.creds.Name, m.creds.Email)
-	}
-	live := m.live
-	if live == "" {
-		live = "…"
-	}
-	title := theme.Header().Width(w).Render(fmt.Sprintf("∬alad  ·  Resume  ·  %s  ·  %s", firstNonEmpty(who, "you"), live))
-	hint := theme.MutedText().Render("Same chats as web. ▸ = selected. Press enter to open.")
+	title := theme.Header().Width(w).Render("∬alad")
+	hint := theme.MutedText().Render("Your chats · enter to open · n for new")
 	sub := theme.MutedText().Render(m.status)
-	cwd := theme.MutedText().Render("folder  " + m.workspaceDir)
 
 	var list strings.Builder
 	if m.chatCreating {
-		list.WriteString(theme.MutedText().Render("Creating Salad chat (shows up on web)…"))
+		list.WriteString(theme.MutedText().Render("Creating…"))
 	} else if m.chatLoad {
-		list.WriteString(theme.MutedText().Render("Loading chats…"))
+		list.WriteString(theme.MutedText().Render("Loading…"))
 	} else {
 		marker := "  "
 		if m.chatIdx == 0 {
 			marker = "▸ "
 		}
-		newRow := marker + "+ New Salad chat\n    Pick AIs (Claude, GPT, Gemini…) · syncs to web"
+		newRow := marker + "+ New chat"
 		if m.chatIdx == 0 {
 			list.WriteString(theme.Selected().Width(w-2).Render(newRow) + "\n")
 		} else {
@@ -1409,7 +1495,7 @@ func (m model) viewChats() string {
 				if len(members) > 48 {
 					members = members[:45] + "…"
 				}
-				titleText := firstNonEmpty(chat.Title, "Untitled")
+				titleText := displayChatTitle(firstNonEmpty(chat.Title, "Untitled"))
 				if len(titleText) > 52 {
 					titleText = titleText[:49] + "…"
 				}
@@ -1421,10 +1507,7 @@ func (m model) viewChats() string {
 				}
 			}
 			if end < len(m.chats) {
-				list.WriteString(theme.MutedText().Render(fmt.Sprintf("  … %d more below — ↓ to scroll", len(m.chats)-end)) + "\n")
-			}
-			if start > 0 {
-				list.WriteString(theme.MutedText().Render(fmt.Sprintf("  … %d above — ↑ to scroll", start)) + "\n")
+				list.WriteString(theme.MutedText().Render(fmt.Sprintf("  … %d more · ↓", len(m.chats)-end)) + "\n")
 			}
 		}
 	}
@@ -1432,34 +1515,39 @@ func (m model) viewChats() string {
 	if m.err != "" {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
-	help := theme.Footer().Width(w).Render("↑↓ move · enter open · n new · 1-9 jump · r refresh · q quit")
-	return lipgloss.JoinVertical(lipgloss.Left, title, hint, cwd, sub, "", errLine+list.String(), help)
+	help := theme.Footer().Width(w).Render("↑↓ · enter · n new · 1-9 · q")
+	return lipgloss.JoinVertical(lipgloss.Left, title, hint, sub, "", errLine+list.String(), help)
 }
 
 func (m model) viewNewAI() string {
 	w := max(m.width, 60)
-	title := theme.Header().Width(w).Render("∬alad  ·  New chat  ·  pick AIs")
-	hint := theme.MutedText().Render("Same catalog as Salad web. Defaults pre-selected for your plan.")
+	heading := "New chat"
+	hint := "Choose who joins · space toggles · enter creates"
+	action := "create"
+	if m.aiPurpose == "add" {
+		heading = "Add AIs"
+		hint = "Add to this chat · already-joined AIs are hidden"
+		action = "add"
+	}
+	title := theme.Header().Width(w).Render("∬alad  ·  " + heading)
+	hintLine := theme.MutedText().Render(hint)
 	sub := theme.MutedText().Render(m.status)
 
 	var list strings.Builder
 	if m.chatCreating {
-		list.WriteString(theme.MutedText().Render("Creating Salad chat…"))
+		list.WriteString(theme.MutedText().Render("Working…"))
 	} else if m.aiLoad {
-		list.WriteString(theme.MutedText().Render("Loading AIs…"))
+		list.WriteString(theme.MutedText().Render("Loading…"))
 	} else {
 		visible := m.visibleAIProducts()
 		if len(visible) == 0 {
-			list.WriteString(theme.MutedText().Render("No AIs available for this account."))
-		} else {
-			const maxVisible = 12
-			start := 0
-			if m.aiIdx >= maxVisible {
-				start = m.aiIdx - maxVisible + 1
+			if m.aiPurpose == "add" {
+				list.WriteString(theme.MutedText().Render("Everyone’s already here. Press m for more models."))
+			} else {
+				list.WriteString(theme.MutedText().Render("No AIs available."))
 			}
-			end := min(len(visible), start+maxVisible)
-			for i := start; i < end; i++ {
-				p := visible[i]
+		} else {
+			for i, p := range visible {
 				marker := "  "
 				if i == m.aiIdx {
 					marker = "▸ "
@@ -1468,24 +1556,18 @@ func (m model) viewNewAI() string {
 				if m.aiSelected[p.Slug] {
 					box = "[x]"
 				}
-				lock := ""
 				if !p.HasAccess {
 					box = "[-]"
-					if p.MinimumPlan != "" {
-						lock = " · needs " + p.MinimumPlan
-					} else {
-						lock = " · locked"
-					}
 				}
-				row := fmt.Sprintf("%s%s %s\n    %s · %s%s", marker, box, p.DisplayName, p.Provider, p.Slug, lock)
+				row := fmt.Sprintf("%s%s  %s", marker, box, p.DisplayName)
+				if !p.HasAccess {
+					row += theme.MutedText().Render("  (upgrade plan)")
+				}
 				if i == m.aiIdx {
 					list.WriteString(theme.Selected().Width(w-2).Render(row) + "\n")
 				} else {
 					list.WriteString(theme.ListItem().Width(w-2).Render(row) + "\n")
 				}
-			}
-			if end < len(visible) {
-				list.WriteString(theme.MutedText().Render(fmt.Sprintf("  … %d more — ↓", len(visible)-end)) + "\n")
 			}
 		}
 	}
@@ -1493,25 +1575,13 @@ func (m model) viewNewAI() string {
 	if m.err != "" {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
-	help := theme.Footer().Width(w).Render("↑↓ move · space toggle · enter create · a defaults · A all · i images · esc back")
-	return lipgloss.JoinVertical(lipgloss.Left, title, hint, sub, "", errLine+list.String(), help)
+	help := theme.Footer().Width(w).Render(fmt.Sprintf("space toggle · enter %s · a select all · m more models · esc", action))
+	return lipgloss.JoinVertical(lipgloss.Left, title, hintLine, sub, "", errLine+list.String(), help)
 }
 
 func (m model) viewRoom() string {
 	w := max(m.width, 60)
-	trust := "workspace untrusted"
-	if m.workspaceOK {
-		trust = "workspace trusted"
-	}
-	tools := "tools on"
-	if !m.attachTools {
-		tools = "tools off"
-	}
-	live := m.live
-	if live == "" {
-		live = "…"
-	}
-	header := theme.Header().Width(w).Render(fmt.Sprintf("∬alad  ·  %s  ·  %s", firstNonEmpty(m.chatTitle, "Chat"), live))
+	header := theme.Header().Width(w).Render("∬alad  ·  " + displayChatTitle(m.chatTitle))
 	people := theme.MutedText().Render(participantsLine(m.members))
 	body := m.viewport.View()
 	mention := ""
@@ -1519,14 +1589,18 @@ func (m model) viewRoom() string {
 		mention = m.renderMentionPicker(w)
 	}
 	composer := theme.Composer().Width(w - 2).Render(m.composer.View())
-	status := m.status
+	status := strings.TrimSpace(m.status)
 	if m.sending {
 		status = "Sending…"
 	}
 	if m.err != "" {
 		status = m.err
 	}
-	footer := theme.Footer().Width(w).Render(fmt.Sprintf("%s  ·  %s  ·  %s  ·  enter send · @ · /new · /resume · esc picker · q quit", status, trust, tools))
+	footerBits := []string{"enter send", "@ mention", "/add AI", "esc"}
+	if status != "" {
+		footerBits = append([]string{status}, footerBits...)
+	}
+	footer := theme.Footer().Width(w).Render(strings.Join(footerBits, "  ·  "))
 	return lipgloss.JoinVertical(lipgloss.Left, header, people, body, mention, composer, footer)
 }
 
@@ -1569,17 +1643,23 @@ func isAssistant(msg api.ChatMessage) bool {
 
 func participantsLine(members []member) string {
 	if len(members) == 0 {
-		return "participants loading…"
+		return ""
 	}
 	names := make([]string, 0, len(members))
 	for _, mem := range members {
+		if strings.EqualFold(mem.MemberType, "user") || strings.EqualFold(mem.MemberType, "human") {
+			continue
+		}
 		label := firstNonEmpty(mem.DisplayName, mem.Slug)
-		if strings.EqualFold(mem.MemberType, "ai") || strings.EqualFold(mem.MemberType, "app") {
-			label = "AI " + label
+		if label == "" {
+			continue
 		}
 		names = append(names, label)
 	}
-	return "With " + strings.Join(names, " · ")
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.Join(names, " · ")
 }
 
 func slugify(name string) string {

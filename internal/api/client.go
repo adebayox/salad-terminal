@@ -441,6 +441,19 @@ func (c *Client) ListAIProducts(ctx context.Context) ([]AIProduct, error) {
 	return wrapped.Products, nil
 }
 
+// AddAIMember adds an AI to an existing Salad chat (same as web Add Member).
+func (c *Client) AddAIMember(ctx context.Context, chatID, productSlug string) error {
+	productSlug = strings.TrimSpace(productSlug)
+	if chatID == "" || productSlug == "" {
+		return fmt.Errorf("chat id and ai product slug required")
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/chats/"+chatID+"/members", map[string]any{
+		"member_type":     "ai",
+		"ai_product_slug": productSlug,
+	})
+	return err
+}
+
 // CreateChat creates a normal Salad chat (same POST /api/chats as the web app).
 // New chats appear in Salad web immediately.
 func (c *Client) CreateChat(ctx context.Context, name string, aiProductSlugs []string) (*ChatPreview, error) {
