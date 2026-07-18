@@ -11,10 +11,26 @@ REPO_URL="${SALAD_TERMINAL_REPO:-https://github.com/adebayox/salad-terminal.git}
 REPO_REF="${SALAD_TERMINAL_REF:-main}"
 
 need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || {
-    echo "error: need '$1' on PATH" >&2
-    exit 1
-  }
+  local cmd="$1"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "error: need '$cmd' on PATH" >&2
+  if [[ "$cmd" == "go" ]]; then
+    echo >&2
+    echo "Salad Terminal builds from source. Install Go, then re-run this installer:" >&2
+    echo "  brew install go" >&2
+    echo "  # or https://go.dev/dl/" >&2
+    echo >&2
+    echo "Then:" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash" >&2
+  elif [[ "$cmd" == "git" ]]; then
+    echo >&2
+    echo "Install git, then re-run this installer:" >&2
+    echo "  xcode-select --install" >&2
+    echo "  # or: brew install git" >&2
+  fi
+  exit 1
 }
 
 resolve_bin_dir() {
@@ -70,13 +86,17 @@ fetch_and_build() {
   build_from_dir "$TMP/src"
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# curl|bash has no real script path — BASH_SOURCE is unbound/empty under `set -u`.
+# Only build a local checkout when this file is executed from disk.
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+SCRIPT_DIR=""
+if [[ -n "$SCRIPT_PATH" && "$SCRIPT_PATH" != "bash" && "$SCRIPT_PATH" != "-" && -f "$SCRIPT_PATH" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+fi
 
-# salad update / curl|bash always take latest from GitHub.
-# Local ./install.sh builds the checkout unless SALAD_FORCE_REMOTE=1.
 if [[ "${SALAD_FORCE_REMOTE:-}" == "1" ]]; then
   fetch_and_build
-elif [[ -f "${SCRIPT_DIR}/go.mod" && -d "${SCRIPT_DIR}/cmd/salad" ]]; then
+elif [[ -n "$SCRIPT_DIR" && -f "${SCRIPT_DIR}/go.mod" && -d "${SCRIPT_DIR}/cmd/salad" ]]; then
   build_from_dir "$SCRIPT_DIR"
 else
   fetch_and_build
