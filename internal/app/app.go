@@ -46,6 +46,7 @@ const (
 
 type member struct {
 	ID          string
+	UserID      string
 	DisplayName string
 	Slug        string
 	MemberType  string
@@ -113,6 +114,7 @@ type (
 		err   error
 	}
 	roomMsg struct {
+		chatID   string
 		title    string
 		messages []api.ChatMessage
 		members  []member
@@ -176,7 +178,8 @@ func newModel(opts Options) model {
 	ta := textarea.New()
 	ta.Placeholder = "Message…  @mention · /add for more AIs"
 	ta.ShowLineNumbers = false
-	ta.Prompt = "∬ "
+	// Prompt is painted on every line — leave blank so we don't get ∬ ∬ ∬.
+	ta.Prompt = ""
 	ta.CharLimit = 8000
 	ta.SetHeight(3)
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
@@ -225,24 +228,72 @@ func openRoomCmd(client *api.Client, chatID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		title := chatID
-		var messages []api.ChatMessage
-		boot, err := client.ChatBootstrap(ctx, chatID)
-		if err == nil {
-			title = firstNonEmpty(boot.Chat.Title, boot.Chat.Name, chatID)
-			messages = boot.Messages
-		}
-		// Prefer full messages API (up to 100) over bootstrap's last-50 window.
-		if listed, listErr := client.ListMessages(ctx, chatID, ""); listErr == nil && len(listed) > 0 {
-			messages = listed
-		}
-		members := loadMembers(ctx, client, chatID, boot)
-		if err != nil && len(messages) == 0 {
+		title, messages, members, err := loadRoom(ctx, client, chatID, "")
+		if err != nil {
 			return roomMsg{err: err}
 		}
 		_ = config.SaveActiveChat(&config.ActiveChat{ChatID: chatID, Title: title})
-		return roomMsg{title: title, messages: messages, members: members}
+		return roomMsg{chatID: chatID, title: title, messages: messages, members: members}
 	}
+}
+
+func loadRoom(ctx context.Context, client *api.Client, chatID, knownTitle string) (title string, messages []api.ChatMessage, members []member, err error) {
+	title = firstNonEmpty(knownTitle, chatID)
+	type bootRes struct {
+		boot *api.ChatBootstrapResponse
+		err  error
+	}
+	type msgRes struct {
+		messages []api.ChatMessage
+		err      error
+	}
+	type memRes struct {
+		members []member
+		err     error
+	}
+	bootCh := make(chan bootRes, 1)
+	msgCh := make(chan msgRes, 1)
+	memCh := make(chan memRes, 1)
+	go func() {
+		boot, e := client.ChatBootstrap(ctx, chatID)
+		bootCh <- bootRes{boot: boot, err: e}
+	}()
+	go func() {
+		listed, e := client.ListMessages(ctx, chatID, "")
+		msgCh <- msgRes{messages: listed, err: e}
+	}()
+	go func() {
+		raw, e := client.ListMembers(ctx, chatID)
+		if e != nil {
+			memCh <- memRes{err: e}
+			return
+		}
+		memCh <- memRes{members: normalizeMembers(raw)}
+	}()
+
+	boot := <-bootCh
+	listed := <-msgCh
+	mems := <-memCh
+
+	if boot.err == nil && boot.boot != nil {
+		title = firstNonEmpty(boot.boot.Chat.Title, boot.boot.Chat.Name, title)
+		if listed.err != nil || len(listed.messages) == 0 {
+			messages = boot.boot.Messages
+		}
+	}
+	if listed.err == nil && len(listed.messages) > 0 {
+		messages = listed.messages
+	}
+	if mems.err == nil {
+		members = mems.members
+	} else if boot.err == nil && boot.boot != nil {
+		// Never treat human names from bootstrap as AIs.
+		members = membersFromNames(boot.boot.Chat.MemberNames, true /* aisOnlyGuess */)
+	}
+	if boot.err != nil && listed.err != nil && len(messages) == 0 {
+		return title, nil, members, boot.err
+	}
+	return title, messages, members, nil
 }
 
 func fetchRoomMessages(ctx context.Context, client *api.Client, chatID string) ([]api.ChatMessage, error) {
@@ -256,12 +307,27 @@ func fetchRoomMessages(ctx context.Context, client *api.Client, chatID string) (
 	return boot.Messages, nil
 }
 
-func createChatCmd(client *api.Client, workspaceDir string, aiSlugs []string) tea.Cmd {
+// createChatAndOpenCmd creates the chat then loads the room in one round-trip
+// path so the UI can jump straight into the composer (no "Working…" dead end).
+func createChatAndOpenCmd(client *api.Client, workspaceDir string, aiSlugs []string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		chat, err := client.CreateChat(ctx, defaultTerminalChatName(workspaceDir), aiSlugs)
-		return createdChatMsg{chat: chat, err: err}
+		name := defaultTerminalChatName(workspaceDir)
+		chat, err := client.CreateChat(ctx, name, aiSlugs)
+		if err != nil {
+			return createdChatMsg{err: err}
+		}
+		title := firstNonEmpty(chat.Title, name)
+		// Brand-new chat: skip message fetch; only need members.
+		members := normalizeMembers(nil)
+		if raw, memErr := client.ListMembers(ctx, chat.ID); memErr == nil {
+			members = normalizeMembers(raw)
+		} else {
+			members = membersFromAISlugs(aiSlugs)
+		}
+		_ = config.SaveActiveChat(&config.ActiveChat{ChatID: chat.ID, Title: title})
+		return roomMsg{chatID: chat.ID, title: title, messages: nil, members: members}
 	}
 }
 
@@ -508,21 +574,12 @@ func (m *model) afterAuth() tea.Cmd {
 	return tea.Batch(m.beginNewChat(), wsCmd)
 }
 
-func loadMembers(ctx context.Context, client *api.Client, chatID string, boot *api.ChatBootstrapResponse) []member {
-	raw, err := client.ListMembers(ctx, chatID)
-	if err != nil {
-		out := []member{}
-		if boot != nil {
-			for _, name := range boot.Chat.MemberNames {
-				out = append(out, member{DisplayName: name, MemberType: "ai", Slug: slugify(name)})
-			}
-		}
-		return out
-	}
+func normalizeMembers(raw []map[string]any) []member {
 	out := make([]member, 0, len(raw))
 	for _, item := range raw {
 		out = append(out, member{
 			ID:          stringField(item, "id"),
+			UserID:      stringField(item, "user_id"),
 			DisplayName: firstNonEmpty(stringField(item, "display_name"), stringField(item, "name")),
 			Slug:        firstNonEmpty(stringField(item, "slug"), stringField(item, "username")),
 			MemberType:  firstNonEmpty(stringField(item, "member_type"), stringField(item, "type")),
@@ -530,6 +587,73 @@ func loadMembers(ctx context.Context, client *api.Client, chatID string, boot *a
 		})
 	}
 	return out
+}
+
+func isAIMember(mem member) bool {
+	switch strings.ToLower(strings.TrimSpace(mem.MemberType)) {
+	case "ai", "app", "agent":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHumanMember(mem member) bool {
+	if isAIMember(mem) {
+		return false
+	}
+	t := strings.ToLower(strings.TrimSpace(mem.MemberType))
+	if t == "user" || t == "human" || t == "guest" {
+		return true
+	}
+	// Humans often arrive as role=owner/admin/member with user_id set.
+	if mem.UserID != "" {
+		return true
+	}
+	role := strings.ToLower(strings.TrimSpace(mem.Role))
+	return role == "owner" || role == "admin" || role == "member"
+}
+
+func membersFromAISlugs(slugs []string) []member {
+	out := make([]member, 0, len(slugs))
+	for _, slug := range slugs {
+		slug = strings.TrimSpace(slug)
+		if slug == "" {
+			continue
+		}
+		out = append(out, member{
+			DisplayName: strings.ReplaceAll(slug, "-", " "),
+			Slug:        slug,
+			MemberType:  "ai",
+		})
+	}
+	return out
+}
+
+func membersFromNames(names []string, skipLikelyHumans bool) []member {
+	out := make([]member, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if skipLikelyHumans && looksLikeHumanName(name) {
+			continue
+		}
+		out = append(out, member{DisplayName: name, MemberType: "ai", Slug: slugify(name)})
+	}
+	return out
+}
+
+func looksLikeHumanName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, needle := range []string{"gpt", "claude", "gemini", "grok", "mistral", "llama", "groq", "chatgpt", "sonnet", "opus", "haiku"} {
+		if strings.Contains(n, needle) {
+			return false
+		}
+	}
+	// Bootstrap memberNames include the human owner — drop names that don't look like models.
+	return true
 }
 
 func pollCmd(client *api.Client, chatID string) tea.Cmd {
@@ -691,6 +815,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, openRoomCmd(m.client, m.chatID)
 
 	case createdChatMsg:
+		// Only used for create failures (success returns roomMsg).
 		m.chatCreating = false
 		if msg.err != nil {
 			m.err = msg.err.Error()
@@ -698,15 +823,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = screenNewAI
 			return m, nil
 		}
-		title := firstNonEmpty(msg.chat.Title, "Terminal")
-		return m, m.openSelectedChat(msg.chat.ID, title)
+		if msg.chat == nil {
+			return m, nil
+		}
+		return m, m.openSelectedChat(msg.chat.ID, firstNonEmpty(msg.chat.Title, "Terminal"))
 
 	case roomMsg:
+		m.chatCreating = false
 		if msg.err != nil {
 			m.err = msg.err.Error()
+			if m.chatID == "" {
+				m.screen = screenNewAI
+				m.status = "Could not create chat"
+				return m, nil
+			}
 			m.forceResume = true
 			return m, m.showResumePicker("Could not open chat — pick another")
 		}
+		if msg.chatID != "" {
+			m.chatID = msg.chatID
+		}
+		m.screen = screenRoom
 		m.chatTitle = msg.title
 		m.messages = msg.messages
 		m.members = msg.members
@@ -716,8 +853,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.composer.Focus()
 		m.refreshViewport()
 		m.viewport.GotoBottom()
-		cmds := []tea.Cmd{pollCmd(m.client, m.chatID)}
-		return m, tea.Batch(cmds...)
+		return m, pollCmd(m.client, m.chatID)
 
 	case wsSessionMsg:
 		if m.wsClient != nil {
@@ -1061,14 +1197,23 @@ func (m model) updateNewAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = "Pick at least one AI (space)"
 			return m, nil
 		}
-		m.chatCreating = true
 		m.err = ""
 		if m.aiPurpose == "add" {
+			m.chatCreating = true
 			m.status = "Adding…"
 			return m, addAIsCmd(m.client, m.chatID, slugs)
 		}
-		m.status = "Creating…"
-		return m, createChatCmd(m.client, m.workspaceDir, slugs)
+		// Jump into the room immediately — don't strand the user on "Working…".
+		m.chatID = ""
+		m.chatTitle = defaultTerminalChatName(m.workspaceDir)
+		m.messages = nil
+		m.members = m.optimisticAIMembers(slugs)
+		m.screen = screenRoom
+		m.status = "Starting…"
+		m.composer.SetValue("")
+		m.composer.Focus()
+		m.refreshViewport()
+		return m, createChatAndOpenCmd(m.client, m.workspaceDir, slugs)
 	case "r":
 		m.aiLoad = true
 		return m, loadAIProductsCmd(m.client)
@@ -1250,12 +1395,44 @@ func (m *model) insertMention(mem member) {
 
 func (m model) filteredMentions() []member {
 	q := m.mentionQ
+	selfID := ""
+	selfEmail := ""
+	if m.creds != nil {
+		selfID = strings.TrimSpace(m.creds.UserID)
+		selfEmail = strings.ToLower(strings.TrimSpace(m.creds.Email))
+	}
 	out := make([]member, 0, len(m.members))
 	for _, mem := range m.members {
+		// Terminal @ picker is for AIs — never yourself / other humans as "owner".
+		if !isAIMember(mem) || isHumanMember(mem) {
+			continue
+		}
+		if selfID != "" && mem.UserID == selfID {
+			continue
+		}
+		if selfEmail != "" && strings.Contains(strings.ToLower(mem.DisplayName), selfEmail) {
+			continue
+		}
 		hay := strings.ToLower(mem.DisplayName + " " + mem.Slug)
 		if q == "" || strings.Contains(hay, q) {
 			out = append(out, mem)
 		}
+	}
+	return out
+}
+
+func (m model) optimisticAIMembers(slugs []string) []member {
+	bySlug := map[string]api.AIProduct{}
+	for _, p := range m.aiProducts {
+		bySlug[p.Slug] = p
+	}
+	out := make([]member, 0, len(slugs))
+	for _, slug := range slugs {
+		if p, ok := bySlug[slug]; ok {
+			out = append(out, member{DisplayName: p.DisplayName, Slug: p.Slug, MemberType: "ai"})
+			continue
+		}
+		out = append(out, member{DisplayName: slug, Slug: slug, MemberType: "ai"})
 	}
 	return out
 }
@@ -1517,16 +1694,22 @@ func (m model) renderTranscript() string {
 				}
 			}
 		}
-		wrapped := wordwrap.String(body, width-6)
 		if strings.EqualFold(msg.Role, "system") || author == "local" {
+			wrapped := wordwrap.String(body, width-6)
 			b.WriteString(theme.MutedText().Render("⚙ "+wrapped) + "\n\n")
 			continue
 		}
 		if isAssistant(msg) {
 			b.WriteString(theme.AIHeader(author).Render("● "+author) + "\n")
-			b.WriteString(theme.AIBody().Width(width-4).Render(wrapped) + "\n\n")
+			rendered := renderMarkdown(body, width-4)
+			if rendered == "" {
+				rendered = wordwrap.String(body, width-6)
+			}
+			// Glamour already emits ANSI + wrapping — don't re-Width it (breaks styles).
+			b.WriteString(theme.AIBody().Render(rendered) + "\n\n")
 			continue
 		}
+		wrapped := wordwrap.String(body, width-6)
 		bubble := theme.UserBubble().Width(min(width-8, 72)).Render(author + "\n" + wrapped)
 		b.WriteString(bubble + "\n\n")
 	}
@@ -1806,7 +1989,7 @@ func participantsLine(members []member) string {
 	}
 	names := make([]string, 0, len(members))
 	for _, mem := range members {
-		if strings.EqualFold(mem.MemberType, "user") || strings.EqualFold(mem.MemberType, "human") {
+		if !isAIMember(mem) || isHumanMember(mem) {
 			continue
 		}
 		label := firstNonEmpty(mem.DisplayName, mem.Slug)
