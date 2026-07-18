@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	DefaultBaseURL = "https://api.salad.chat"
+	DefaultBaseURL = "https://api.salad.ink"
 	EnvBaseURL     = "SALAD_API_URL"
 	EnvConfigDir   = "SALAD_CONFIG_DIR"
 )

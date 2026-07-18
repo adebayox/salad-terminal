@@ -1,3 +1,4 @@
-salad
+/salad
 *.exe
 .DS_Store
+.salad-trust

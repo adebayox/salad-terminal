@@ -65,7 +65,7 @@ func Login(baseURL, email, password string) error {
 	defer cancel()
 	resp, err := client.Login(ctx, email, password, DeviceInfo(installID))
 	if err != nil {
-		return err
+		return fmt.Errorf("%w\nHint: for staging use SALAD_API_URL=https://api-staging.salad.ink", err)
 	}
 	creds := &config.Credentials{
 		AccessToken:  resp.Session.AccessToken,

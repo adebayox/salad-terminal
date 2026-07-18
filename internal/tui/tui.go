@@ -13,13 +13,22 @@ import (
 // Run starts a minimal send loop for the active (or provided) chat.
 func Run(chatID string) error {
 	if chatID == "" {
-		active, err := config.LoadActiveChat()
-		if err != nil {
-			return fmt.Errorf("no active chat — run: salad chat  or  salad resume <chat-id>")
-		}
-		chatID = active.ChatID
-		if active.Title != "" {
-			fmt.Printf("Salad · %s\n", active.Title)
+		if _, err := config.LoadActiveChat(); err != nil {
+			fmt.Println("No active chat. Pick one to resume:")
+			picked, pickErr := chat.PickInteractive()
+			if pickErr != nil {
+				return pickErr
+			}
+			if err := chat.Resume(picked); err != nil {
+				return err
+			}
+			chatID = picked
+		} else {
+			active, _ := config.LoadActiveChat()
+			chatID = active.ChatID
+			if active.Title != "" {
+				fmt.Printf("Salad · %s\n", active.Title)
+			}
 		}
 	}
 	fmt.Println("Type a message and press Enter. Commands: /participants  /quit")

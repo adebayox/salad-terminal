@@ -46,7 +46,7 @@ type User struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Email     string `json:"email"`
-	AvatarURL string `json:"avatar_url"`
+	AvatarURL string `json:"avatarUrl"`
 }
 
 type AuthResponse struct {
@@ -81,6 +81,7 @@ type ChatMessage struct {
 type ChatBootstrapResponse struct {
 	Chat struct {
 		ID          string   `json:"id"`
+		Title       string   `json:"title"`
 		Name        string   `json:"name"`
 		MemberNames []string `json:"memberNames"`
 	} `json:"chat"`
@@ -104,18 +105,18 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("http %d: %s", e.Status, e.Message)
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		reader = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
@@ -126,12 +127,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	payload, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var envelope struct {
@@ -140,8 +141,16 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(payload, &envelope)
-		msg := firstNonEmpty(envelope.Message, envelope.Error, strings.TrimSpace(string(payload)))
-		return &APIError{Status: resp.StatusCode, Code: envelope.Code, Message: msg}
+		msg := errorText(envelope.Message, envelope.Error, strings.TrimSpace(string(payload)))
+		return nil, &APIError{Status: resp.StatusCode, Code: envelope.Code, Message: msg}
+	}
+	return payload, nil
+}
+
+func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
+	payload, err := c.do(ctx, method, path, body)
+	if err != nil {
+		return err
 	}
 	if out == nil || len(payload) == 0 {
 		return nil
@@ -155,12 +164,81 @@ func firstNonEmpty(values ...string) string {
 			return v
 		}
 	}
+	return ""
+}
+
+func errorText(values ...string) string {
+	if text := firstNonEmpty(values...); text != "" {
+		return text
+	}
 	return "request failed"
+}
+
+func normalizeMessage(raw map[string]any) ChatMessage {
+	sender, _ := raw["sender"].(map[string]any)
+	msg := ChatMessage{
+		ID:         stringField(raw, "id"),
+		ChatID:     firstNonEmpty(stringField(raw, "chatId"), stringField(raw, "chat_id")),
+		Role:       firstNonEmpty(stringField(raw, "role"), stringField(raw, "message_type"), stringField(raw, "sender_type")),
+		AuthorName: firstNonEmpty(
+			stringField(raw, "authorName"),
+			stringField(raw, "sender_name"),
+			stringField(sender, "display_name"),
+			stringField(sender, "name"),
+		),
+		Body:     firstNonEmpty(stringField(raw, "body"), stringField(raw, "content")),
+		SenderID: firstNonEmpty(stringField(raw, "senderId"), stringField(raw, "sender_id")),
+	}
+	if ts := firstNonEmpty(stringField(raw, "createdAt"), stringField(raw, "created_at")); ts != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			msg.CreatedAt = parsed
+		} else if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			msg.CreatedAt = parsed
+		}
+	}
+	return msg
+}
+
+func decodeMessages(payload []byte) ([]ChatMessage, error) {
+	var asArray []map[string]any
+	if err := json.Unmarshal(payload, &asArray); err == nil {
+		out := make([]ChatMessage, 0, len(asArray))
+		for _, raw := range asArray {
+			out = append(out, normalizeMessage(raw))
+		}
+		return out, nil
+	}
+	var wrapped struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(payload, &wrapped); err != nil {
+		return nil, err
+	}
+	out := make([]ChatMessage, 0, len(wrapped.Messages))
+	for _, raw := range wrapped.Messages {
+		out = append(out, normalizeMessage(raw))
+	}
+	return out, nil
+}
+
+func stringField(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Sprint(v)
+	}
+	return s
 }
 
 func (c *Client) Login(ctx context.Context, email, password string, device DeviceInfo) (*AuthResponse, error) {
 	var out AuthResponse
-	err := c.do(ctx, http.MethodPost, "/api/mobile/auth/login", map[string]any{
+	err := c.doJSON(ctx, http.MethodPost, "/api/mobile/auth/login", map[string]any{
 		"email":       email,
 		"password":    password,
 		"device_info": device,
@@ -170,7 +248,7 @@ func (c *Client) Login(ctx context.Context, email, password string, device Devic
 
 func (c *Client) Refresh(ctx context.Context, refreshToken string, device DeviceInfo) (*AuthResponse, error) {
 	var out AuthResponse
-	err := c.do(ctx, http.MethodPost, "/api/mobile/auth/refresh", map[string]any{
+	err := c.doJSON(ctx, http.MethodPost, "/api/mobile/auth/refresh", map[string]any{
 		"refresh_token": refreshToken,
 		"device_info":    device,
 	}, &out)
@@ -178,86 +256,105 @@ func (c *Client) Refresh(ctx context.Context, refreshToken string, device Device
 }
 
 func (c *Client) Logout(ctx context.Context, refreshToken string) error {
-	return c.do(ctx, http.MethodPost, "/api/mobile/auth/logout", map[string]any{
+	return c.doJSON(ctx, http.MethodPost, "/api/mobile/auth/logout", map[string]any{
 		"refresh_token": refreshToken,
 	}, nil)
 }
 
 func (c *Client) Me(ctx context.Context) (*User, error) {
-	var out struct {
+	payload, err := c.do(ctx, http.MethodGet, "/api/mobile/auth/me", nil)
+	if err != nil {
+		return nil, err
+	}
+	var direct User
+	if err := json.Unmarshal(payload, &direct); err == nil && (direct.ID != "" || direct.Email != "") {
+		return &direct, nil
+	}
+	var wrapped struct {
 		User User `json:"user"`
 		Me   User `json:"me"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/api/mobile/auth/me", nil, &out); err != nil {
+	if err := json.Unmarshal(payload, &wrapped); err != nil {
 		return nil, err
 	}
-	if out.User.ID != "" {
-		return &out.User, nil
+	if wrapped.User.ID != "" || wrapped.User.Email != "" {
+		return &wrapped.User, nil
 	}
-	if out.Me.ID != "" {
-		return &out.Me, nil
-	}
-	// Some deployments return the user object at the top level.
-	var direct User
-	if err := c.do(ctx, http.MethodGet, "/api/mobile/auth/me", nil, &direct); err == nil && direct.ID != "" {
-		return &direct, nil
-	}
-	return &out.User, nil
+	return &wrapped.Me, nil
 }
 
 func (c *Client) Bootstrap(ctx context.Context) (*BootstrapResponse, error) {
 	var out BootstrapResponse
-	err := c.do(ctx, http.MethodGet, "/api/mobile/bootstrap", nil, &out)
+	err := c.doJSON(ctx, http.MethodGet, "/api/mobile/bootstrap", nil, &out)
 	return &out, err
 }
 
 func (c *Client) ChatBootstrap(ctx context.Context, chatID string) (*ChatBootstrapResponse, error) {
-	var out ChatBootstrapResponse
-	err := c.do(ctx, http.MethodGet, "/api/mobile/chats/"+chatID+"/bootstrap", nil, &out)
-	return &out, err
-}
-
-func (c *Client) ListMessages(ctx context.Context, chatID string) ([]ChatMessage, error) {
-	var out []ChatMessage
-	var wrapped struct {
-		Messages []ChatMessage `json:"messages"`
-	}
-	path := "/api/chats/" + chatID + "/messages"
-	if err := c.do(ctx, http.MethodGet, path, nil, &wrapped); err == nil && len(wrapped.Messages) > 0 {
-		return wrapped.Messages, nil
-	}
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	payload, err := c.do(ctx, http.MethodGet, "/api/mobile/chats/"+chatID+"/bootstrap", nil)
+	if err != nil {
 		return nil, err
+	}
+	var raw struct {
+		Chat struct {
+			ID          string   `json:"id"`
+			Title       string   `json:"title"`
+			Name        string   `json:"name"`
+			MemberNames []string `json:"memberNames"`
+		} `json:"chat"`
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return nil, err
+	}
+	out := &ChatBootstrapResponse{}
+	out.Chat.ID = raw.Chat.ID
+	out.Chat.Title = raw.Chat.Title
+	out.Chat.Name = raw.Chat.Name
+	out.Chat.MemberNames = raw.Chat.MemberNames
+	for _, msg := range raw.Messages {
+		out.Messages = append(out.Messages, normalizeMessage(msg))
 	}
 	return out, nil
 }
 
-func (c *Client) SendMessage(ctx context.Context, chatID, content string) (*ChatMessage, error) {
-	var out ChatMessage
-	var wrapped struct {
-		Message ChatMessage `json:"message"`
-	}
-	body := SendMessageRequest{Content: content}
-	path := "/api/chats/" + chatID + "/messages"
-	if err := c.do(ctx, http.MethodPost, path, body, &wrapped); err == nil && wrapped.Message.ID != "" {
-		return &wrapped.Message, nil
-	}
-	if err := c.do(ctx, http.MethodPost, path, body, &out); err != nil {
+func (c *Client) ListMessages(ctx context.Context, chatID string) ([]ChatMessage, error) {
+	payload, err := c.do(ctx, http.MethodGet, "/api/chats/"+chatID+"/messages", nil)
+	if err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return decodeMessages(payload)
+}
+
+func (c *Client) SendMessage(ctx context.Context, chatID, content string) (*ChatMessage, error) {
+	payload, err := c.do(ctx, http.MethodPost, "/api/chats/"+chatID+"/messages", SendMessageRequest{Content: content})
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return nil, err
+	}
+	if nested, ok := raw["message"].(map[string]any); ok {
+		msg := normalizeMessage(nested)
+		return &msg, nil
+	}
+	msg := normalizeMessage(raw)
+	return &msg, nil
 }
 
 func (c *Client) ListMembers(ctx context.Context, chatID string) ([]map[string]any, error) {
+	payload, err := c.do(ctx, http.MethodGet, "/api/chats/"+chatID+"/members", nil)
+	if err != nil {
+		return nil, err
+	}
 	var wrapped struct {
 		Members []map[string]any `json:"members"`
 	}
-	path := "/api/chats/" + chatID + "/members"
-	if err := c.do(ctx, http.MethodGet, path, nil, &wrapped); err == nil {
+	if err := json.Unmarshal(payload, &wrapped); err == nil && wrapped.Members != nil {
 		return wrapped.Members, nil
 	}
 	var out []map[string]any
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := json.Unmarshal(payload, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

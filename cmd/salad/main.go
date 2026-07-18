@@ -61,6 +61,16 @@ func run(args []string) error {
 		if len(rest) == 0 {
 			return chat.List()
 		}
+		if rest[0] == "pick" {
+			id, err := chat.PickInteractive()
+			if err != nil {
+				return err
+			}
+			if err := chat.Resume(id); err != nil {
+				return err
+			}
+			return tui.Run(id)
+		}
 		if rest[0] == "participants" {
 			id := ""
 			if len(rest) > 1 {
@@ -70,13 +80,31 @@ func run(args []string) error {
 		}
 		return fmt.Errorf("unknown chat subcommand %q", rest[0])
 	case "resume":
-		if len(rest) < 1 {
-			return fmt.Errorf("usage: salad resume <chat-id>")
+		noTUI := false
+		chatID := ""
+		for _, arg := range rest {
+			if arg == "--no-tui" {
+				noTUI = true
+				continue
+			}
+			if chatID == "" {
+				chatID = arg
+			}
 		}
-		if err := chat.Resume(rest[0]); err != nil {
+		if chatID == "" {
+			id, err := chat.PickInteractive()
+			if err != nil {
+				return err
+			}
+			chatID = id
+		}
+		if err := chat.Resume(chatID); err != nil {
 			return err
 		}
-		return tui.Run(rest[0])
+		if noTUI {
+			return nil
+		}
+		return tui.Run(chatID)
 	case "say", "send":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: salad say <message>")
@@ -161,18 +189,20 @@ func printUsage() {
 	fmt.Print(`Salad Terminal — equal Salad surface (CLI)
 
 Usage:
-  salad                      Open minimal TUI for the active chat
+  salad                      Open TUI (picks a chat if none active)
   salad login [--base-url U] Log in with normal Salad user credentials
   salad logout
   salad whoami
-  salad chat                 List chats
+  salad chat                 List recent chats
+  salad chat pick            Pick a chat and open TUI
   salad chat participants    Show participants for active chat
-  salad resume <chat-id>     Resume chat and open TUI
-  salad say <message>        Send to active chat
+  salad resume [chat-id]     Resume chat and open TUI (--no-tui to skip)
+  salad say <message>        Send to active chat (waits briefly for reply)
   salad workspace …          Local trust / read / git / permissions
 
 Environment:
-  SALAD_API_URL     API base (default https://api.salad.chat; use staging URL locally)
+  SALAD_API_URL     API base (default https://api.salad.ink)
+                    staging: https://api-staging.salad.ink
   SALAD_CONFIG_DIR  Override credentials directory
 
 Contract: docs/TERMINAL_CONTRACT.md
