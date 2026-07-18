@@ -275,7 +275,7 @@ same Salad chats, in your repo  (%s)
   salad --resume, -r    Previous conversations picker
   salad new             Same as bare salad
   salad update          Force update now (also auto on launch)
-  salad version         Show installed build vs GitHub main
+  salad version         Show installed build vs latest release
   salad resume <id>     Jump straight into a chat
   salad login           Email/password sign-in
   salad login --google  Browser Google OAuth
@@ -284,6 +284,7 @@ same Salad chats, in your repo  (%s)
   salad say <message>   Quick send to active chat
   salad workspace …     Local trust / read / git / permissions
 
+Install (no Go): curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash
 On new-chat entry: 1-3 open recent · c continue · r previous · enter start
 In a chat: @ mention · /add · /new · /resume · esc · q
 Default API: staging (https://api-staging.salad.ink)

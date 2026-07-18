@@ -1,0 +1,62 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        run: |
+          set -euo pipefail
+          ver="$(git rev-parse --short HEAD)"
+          echo -n "$ver" > VERSION
+          mkdir -p dist
+          cp VERSION dist/VERSION
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              echo "building salad-${os}-${arch} (${ver})"
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+                -ldflags "-s -w -X main.Version=${ver}" \
+                -o "dist/salad-${os}-${arch}" \
+                ./cmd/salad
+            done
+          done
+          ls -la dist
+
+      - name: Publish latest release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: latest
+          name: Salad Terminal (latest)
+          body: |
+            Prebuilt Salad Terminal binaries. Install with:
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash
+            ```
+
+            No Go required.
+          artifacts: dist/*
+          artifactErrorsFailBuild: true
+          allowUpdates: true
+          replacesArtifacts: true
+          makeLatest: true
+          commit: ${{ github.sha }}
+          omitBodyDuringUpdate: false
+          omitNameDuringUpdate: false

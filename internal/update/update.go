@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	repoAPI   = "https://api.github.com/repos/adebayox/salad-terminal/commits/main"
+	versionURL = "https://github.com/adebayox/salad-terminal/releases/download/latest/VERSION"
+	repoAPI    = "https://api.github.com/repos/adebayox/salad-terminal/commits/main"
 	installURL = "https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh"
 	envDisable = "SALAD_DISABLE_AUTOUPDATER"
 )
@@ -102,7 +103,12 @@ func fetchMainSHA() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
-	// Prefer git ls-remote (no API rate limit).
+	// Prefer the published release VERSION (what install.sh actually ships).
+	if sha, err := fetchReleaseVersion(ctx); err == nil && sha != "" {
+		return sha, nil
+	}
+
+	// Fallback: git ls-remote (no API rate limit).
 	if sha, err := gitLSRemoteSHA(ctx); err == nil && sha != "" {
 		return sha, nil
 	}
@@ -130,6 +136,25 @@ func fetchMainSHA() (string, error) {
 	return normalizeSHA(payload.SHA), nil
 }
 
+func fetchReleaseVersion(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "salad-terminal")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("version %s", resp.Status)
+	}
+	var buf [64]byte
+	n, _ := resp.Body.Read(buf[:])
+	return normalizeSHA(string(buf[:n])), nil
+}
+
 func gitLSRemoteSHA(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "ls-remote", "https://github.com/adebayox/salad-terminal.git", "refs/heads/main")
 	out, err := cmd.Output()
@@ -144,6 +169,8 @@ func gitLSRemoteSHA(ctx context.Context) (string, error) {
 }
 
 func runInstall() error {
+	// Binary install (no Go). SALAD_FORCE_REMOTE keeps contributor checkouts from
+	// rebuilding local source during auto-update.
 	cmd := exec.Command("bash", "-c", "curl -fsSL "+installURL+" | SALAD_FORCE_REMOTE=1 bash")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
