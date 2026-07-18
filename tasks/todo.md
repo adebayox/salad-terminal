@@ -1,23 +1,22 @@
 # Salad Terminal — task board
 
-## Done / in progress (this bootstrap)
+## Shipped
 
-- [x] Contract: equal surface, normal Salad identity, no pairing/MCP
-- [x] Explicit: Terminal does not depend on finishing realtime_v2; ACK/v2 stays platform-owned
-- [x] CLI skeleton: `login | logout | whoami | chat | resume` + minimal TUI send loop
-- [x] Local workspace trust + read/git/diff/permissions scaffolding (no turn bridge yet)
+- [x] Equal-surface contract (no pairing / MCP)
+- [x] Real Salad TUI: login → chat list → room (bubbles + AI document replies)
+- [x] Same staging chats / members / send as web
+- [x] Live poll for collaborator replies
+- [x] Local workspace trust + read/git/diff
+- [x] Dogfood: PRODUCT_TUI_OK round-trip on staging
 
 ## Next
 
-- [ ] Browser OAuth device-code / loopback login (beyond email/password)
-- [ ] Richer TUI: participant list, streaming replies, @ routing parity
-- [ ] Turn-scoped tool bridge for terminal-initiated turns only
-- [ ] Collaboration matrix on staging; production freeze until green
+- [ ] Browser OAuth / device-code login
+- [ ] Streaming tokens (websocket) instead of 2s poll
+- [ ] @ mention picker UI (hints exist)
+- [ ] Turn-scoped local tool bridge
+- [ ] Production default API after collaboration matrix
 
-## ACK platform track (SEPARATE — not Terminal MVP)
+## ACK platform track (SEPARATE)
 
-Owned by normal-chat platform; do not delete; do not block Terminal on it.
-
-- [ ] Audit: two consumers for one user corrupt resume under salad.v1 user ACK
-- [ ] Complete consumer-scoped ACK migration when ready (independent PR series)
-- [ ] Keep `AcknowledgeConsumerEvent`, delivery ledger, `/realtime/v2/consumers`
+- [ ] Consumer-scoped ACK migration — not Terminal-owned
