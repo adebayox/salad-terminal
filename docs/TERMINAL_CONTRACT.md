@@ -5,15 +5,17 @@ identity, chats, participants, routing, and transcript semantics as the web app.
 
 ## Product shape
 
-Session UX follows the same patterns as Claude Code / Codex CLI:
+Session UX follows Claude Code’s CLI model:
 
 | Action | Behavior |
 |---|---|
-| `salad` | Continue the last Salad chat bound to this workspace (else resume picker) |
-| `salad --resume` | Explicit picker: ↑↓ + Enter to open, `n` / first row = new chat, `1-9` jump |
-| `salad new` / picker `n` | `POST /api/chats` — a real Salad chat that appears on web |
+| `salad` | New session — AI picker → `POST /api/chats` (appears on web) |
+| `salad --continue` | Resume last Salad chat bound to this workspace |
+| `salad --resume` | Explicit picker: ↑↓ + Enter, `n` new, `1-9` jump |
+| `salad new` | Same as bare `salad` |
 | In-room `/resume`, `esc` | Back to picker |
-| In-room `/new` | Create another Salad chat and switch into it |
+| In-room `/add` | Add more AIs to the current chat |
+| In-room `/new` | Create another Salad chat |
 
 - `cd <repo> && salad` authenticates as a normal Salad user (email/password or
   browser OAuth via the same mobile auth endpoints).

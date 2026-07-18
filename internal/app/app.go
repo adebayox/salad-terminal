@@ -25,12 +25,13 @@ import (
 )
 
 // Options controls how Salad Terminal starts a session.
-// Default (empty): continue the last chat for this workspace when known;
-// otherwise show a resume picker (Claude Code / Codex style).
+// Industry default (Claude Code): bare launch = new session;
+// --continue = last for this folder; --resume = picker.
 type Options struct {
-	ChatID      string
-	ForceResume bool // always show the picker
-	ForceNew    bool // create a new Salad chat and open it
+	ChatID        string
+	ForceResume   bool // salad --resume → picker
+	ForceContinue bool // salad --continue → last chat for this folder
+	ForceNew      bool // salad / salad new → AI picker → create
 }
 
 type screen int
@@ -69,9 +70,10 @@ type model struct {
 	chatIdx      int // picker: 0 = New chat, 1.. = chats[i-1]
 	chatLoad     bool
 	chatCreating bool
-	forceResume  bool
-	forceNew     bool
-	pickerInited bool
+	forceResume   bool
+	forceContinue bool
+	forceNew      bool
+	pickerInited  bool
 
 	aiProducts []api.AIProduct
 	aiSelected map[string]bool
@@ -185,10 +187,11 @@ func newModel(opts Options) model {
 		status:       "Opening Salad…",
 		composer:     ta,
 		viewport:     viewport.New(80, 20),
-		chatID:       strings.TrimSpace(opts.ChatID),
-		forceResume:  opts.ForceResume,
-		forceNew:     opts.ForceNew,
-		workspaceDir: root,
+		chatID:        strings.TrimSpace(opts.ChatID),
+		forceResume:   opts.ForceResume,
+		forceContinue: opts.ForceContinue,
+		forceNew:      opts.ForceNew,
+		workspaceDir:  root,
 		workspaceOK:  workspace.IsTrusted(root),
 		// Opt-in: /git /read /diff or ctrl+t. Avoid shipping git dumps on every send.
 		attachTools: false,
@@ -460,22 +463,35 @@ func (m *model) showResumePicker(status string) tea.Cmd {
 
 func (m *model) afterAuth() tea.Cmd {
 	wsCmd := wsListenCmd(config.BaseURL(), m.creds.AccessToken)
-	if m.forceNew {
-		return tea.Batch(m.beginNewChat(), wsCmd)
+
+	// Explicit resume picker (claude --resume).
+	if m.forceResume {
+		return tea.Batch(m.showResumePicker("↑↓ open · n new"), wsCmd)
 	}
-	if m.chatID == "" && !m.forceResume {
-		if id, title := resolveContinueChat(m.workspaceDir); id != "" {
-			m.chatID = id
-			m.chatTitle = title
-		}
-	}
-	if m.chatID != "" && !m.forceResume {
+
+	// Jump to a specific chat id.
+	if m.chatID != "" {
 		m.screen = screenRoom
-		m.status = "Continuing last chat…"
+		m.status = "Opening…"
 		_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
 		return tea.Batch(openRoomCmd(m.client, m.chatID), wsCmd)
 	}
-	return tea.Batch(m.showResumePicker("↑↓ to move · enter to open · n new chat"), wsCmd)
+
+	// Continue last chat for this folder (claude --continue).
+	if m.forceContinue {
+		if id, title := resolveContinueChat(m.workspaceDir); id != "" {
+			m.chatID = id
+			m.chatTitle = title
+			m.screen = screenRoom
+			m.status = "Continuing…"
+			_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
+			return tea.Batch(openRoomCmd(m.client, m.chatID), wsCmd)
+		}
+		return tea.Batch(m.showResumePicker("No recent chat here · n new · enter open"), wsCmd)
+	}
+
+	// Default bare `salad` / `salad new`: new session (claude with no flags).
+	return tea.Batch(m.beginNewChat(), wsCmd)
 }
 
 func loadMembers(ctx context.Context, client *api.Client, chatID string, boot *api.ChatBootstrapResponse) []member {

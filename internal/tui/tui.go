@@ -1,18 +1,31 @@
 package tui
 
-import "github.com/salad-ai/salad-terminal/internal/app"
+import (
+	"strings"
 
-// Run launches the Salad Terminal surface (same chats as the web app).
+	"github.com/salad-ai/salad-terminal/internal/app"
+)
+
+// Run launches Terminal. Bare launch (empty chatID) starts a new chat —
+// same as Claude Code with no flags.
 func Run(chatID string) error {
-	return app.RunOptions(app.Options{ChatID: chatID})
+	if strings.TrimSpace(chatID) != "" {
+		return app.RunOptions(app.Options{ChatID: chatID})
+	}
+	return app.RunOptions(app.Options{ForceNew: true})
 }
 
-// RunResume always shows the resume picker (like Claude Code --resume).
+// RunContinue resumes the last chat for this folder (claude --continue).
+func RunContinue() error {
+	return app.RunOptions(app.Options{ForceContinue: true})
+}
+
+// RunResume shows the resume picker (claude --resume).
 func RunResume() error {
 	return app.RunOptions(app.Options{ForceResume: true})
 }
 
-// RunNew creates a new Salad chat and opens it.
+// RunNew starts the new-chat AI picker (same as bare Run).
 func RunNew() error {
 	return app.RunOptions(app.Options{ForceNew: true})
 }

@@ -32,6 +32,7 @@ func run(args []string) error {
 		if err := ensureLatest(); err != nil {
 			return err
 		}
+		// Claude Code: bare launch = new session.
 		return tui.Run("")
 	}
 	cmd := args[0]
@@ -52,6 +53,11 @@ func run(args []string) error {
 		return nil
 	case "update":
 		return runUpdate()
+	case "--continue", "-c", "continue":
+		if err := ensureLatest(); err != nil {
+			return err
+		}
+		return tui.RunContinue()
 	case "--resume", "-r":
 		if err := ensureLatest(); err != nil {
 			return err
@@ -264,10 +270,11 @@ func printUsage() {
 	fmt.Printf(`
 same Salad chats, in your repo  (%s)
 
-  salad                 Continue last chat for this folder (or open resume picker)
-  salad --resume        Pick a Salad chat (↑↓ · enter · n new · 1-9)
-  salad new             New chat → pick AIs (Claude, GPT, Gemini…) → create
-  salad update          Force update now (also happens automatically on launch)
+  salad                 New chat (pick AIs) — same as Claude Code bare launch
+  salad --continue      Resume last chat for this folder
+  salad --resume        Pick a chat
+  salad new             Same as bare salad
+  salad update          Force update now (also auto on launch)
   salad version         Show installed build vs GitHub main
   salad resume <id>     Jump straight into a chat
   salad login           Email/password sign-in
@@ -277,8 +284,8 @@ same Salad chats, in your repo  (%s)
   salad say <message>   Quick send to active chat
   salad workspace …     Local trust / read / git / permissions
 
-In a chat: @ mention · /new (pick AIs) · /resume · esc picker · q quit
-AI picker: space toggle · enter create · a defaults · A all
+In a chat: @ mention · /add AI · /new · /resume · esc · q
+AI picker: space · enter · a select all · m more models
 Default API: staging (https://api-staging.salad.ink)
 `, Version)
 }
