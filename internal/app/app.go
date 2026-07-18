@@ -1395,7 +1395,7 @@ func (m model) renderTranscript() string {
 func (m model) View() string {
 	switch m.screen {
 	case screenBoot:
-		return theme.Header().Width(max(m.width, 40)).Render("∬alad") + "\n\n" + theme.MutedText().Render(m.status)
+		return theme.Banner(max(m.width, 40)) + "\n\n" + theme.MutedText().Render(m.status)
 	case screenLogin:
 		return m.viewLogin()
 	case screenChats:
@@ -1411,8 +1411,8 @@ func (m model) View() string {
 
 func (m model) viewLogin() string {
 	w := max(m.width, 60)
-	title := theme.Header().Width(w).Render("∬alad  ·  Terminal")
-	sub := theme.MutedText().Render("Same account. Same chats. Think together from your repo.")
+	banner := theme.Banner(w)
+	sub := theme.MutedText().Render("Same account. Same chats. From your repo.")
 	emailLabel, passLabel := "email", "password"
 	if m.loginFocus == 0 {
 		emailLabel = theme.Brand().Render("▸ email")
@@ -1432,14 +1432,13 @@ func (m model) viewLogin() string {
 	if m.err != "" {
 		errLine = "\n" + theme.Error().Render(m.err)
 	}
-	help := theme.Footer().Width(w).Render("enter sign in · g Google browser login · tab fields · q quit")
-	host := theme.MutedText().Render("API " + config.BaseURL())
-	return lipgloss.JoinVertical(lipgloss.Left, title, sub, "", form, errLine, "", host, help)
+	help := theme.Footer().Width(w).Render("enter sign in · g Google · tab · q")
+	return lipgloss.JoinVertical(lipgloss.Left, banner, "", sub, "", form, errLine, "", help)
 }
 
 func (m model) viewChats() string {
 	w := max(m.width, 60)
-	title := theme.Header().Width(w).Render("∬alad")
+	banner := theme.Banner(w)
 	hint := theme.MutedText().Render("Your chats · enter to open · n for new")
 	sub := theme.MutedText().Render(m.status)
 
@@ -1516,7 +1515,7 @@ func (m model) viewChats() string {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
 	help := theme.Footer().Width(w).Render("↑↓ · enter · n new · 1-9 · q")
-	return lipgloss.JoinVertical(lipgloss.Left, title, hint, sub, "", errLine+list.String(), help)
+	return lipgloss.JoinVertical(lipgloss.Left, banner, "", hint, sub, "", errLine+list.String(), help)
 }
 
 func (m model) viewNewAI() string {
@@ -1529,7 +1528,7 @@ func (m model) viewNewAI() string {
 		hint = "Add to this chat · already-joined AIs are hidden"
 		action = "add"
 	}
-	title := theme.Header().Width(w).Render("∬alad  ·  " + heading)
+	title := theme.Header().Width(w).Render(theme.Mark() + "  ·  " + heading)
 	hintLine := theme.MutedText().Render(hint)
 	sub := theme.MutedText().Render(m.status)
 
@@ -1581,7 +1580,7 @@ func (m model) viewNewAI() string {
 
 func (m model) viewRoom() string {
 	w := max(m.width, 60)
-	header := theme.Header().Width(w).Render("∬alad  ·  " + displayChatTitle(m.chatTitle))
+	header := theme.Header().Width(w).Render(theme.Mark() + "  ·  " + displayChatTitle(m.chatTitle))
 	people := theme.MutedText().Render(participantsLine(m.members))
 	body := m.viewport.View()
 	mention := ""

@@ -9,6 +9,7 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/auth"
 	"github.com/salad-ai/salad-terminal/internal/chat"
 	"github.com/salad-ai/salad-terminal/internal/config"
+	"github.com/salad-ai/salad-terminal/internal/theme"
 	"github.com/salad-ai/salad-terminal/internal/tui"
 	"github.com/salad-ai/salad-terminal/internal/update"
 	"github.com/salad-ai/salad-terminal/internal/workspace"
@@ -259,7 +260,9 @@ func runWorkspace(args []string) error {
 }
 
 func printUsage() {
-	fmt.Printf(`∬alad Terminal — same Salad, in your repo  (%s)
+	fmt.Println(theme.Banner(72))
+	fmt.Printf(`
+same Salad chats, in your repo  (%s)
 
   salad                 Continue last chat for this folder (or open resume picker)
   salad --resume        Pick a Salad chat (↑↓ · enter · n new · 1-9)
