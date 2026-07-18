@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/salad-ai/salad-terminal/internal/auth"
@@ -11,6 +12,11 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/tui"
 	"github.com/salad-ai/salad-terminal/internal/workspace"
 )
+
+// Version is stamped at build time (git short sha). See install.sh.
+var Version = "dev"
+
+const installURL = "https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -30,6 +36,11 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
+	case "version", "--version", "-v":
+		fmt.Println("salad", Version)
+		return nil
+	case "update":
+		return runUpdate()
 	case "--resume", "-r":
 		return tui.RunResume()
 	case "new":
@@ -124,6 +135,18 @@ func run(args []string) error {
 	}
 }
 
+func runUpdate() error {
+	fmt.Println("Updating Salad Terminal from GitHub…")
+	cmd := exec.Command("bash", "-c", "curl -fsSL "+installURL+" | SALAD_FORCE_REMOTE=1 bash")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("update failed: %w", err)
+	}
+	return nil
+}
+
 func runWorkspace(args []string) error {
 	if len(args) == 0 {
 		summary, err := workspace.PermissionsSummary("")
@@ -197,11 +220,13 @@ func runWorkspace(args []string) error {
 }
 
 func printUsage() {
-	fmt.Print(`∬alad Terminal — same Salad, in your repo
+	fmt.Printf(`∬alad Terminal — same Salad, in your repo  (%s)
 
   salad                 Continue last chat for this folder (or open resume picker)
   salad --resume        Pick a Salad chat (↑↓ · enter · n new · 1-9)
-  salad new             Create a new Salad chat (syncs to web) and open it
+  salad new             New chat → pick AIs (Claude, GPT, Gemini…) → create
+  salad update          Pull latest Terminal from GitHub and reinstall
+  salad version         Show installed build
   salad resume <id>     Jump straight into a chat
   salad login           Email/password sign-in
   salad login --google  Browser Google OAuth
@@ -210,8 +235,8 @@ func printUsage() {
   salad say <message>   Quick send to active chat
   salad workspace …     Local trust / read / git / permissions
 
-In a chat: @ mention · /git /read · /new · /resume · esc = picker · ctrl+c quit
-New chats are real Salad chats — they show up on the web app too.
+In a chat: @ mention · /new (pick AIs) · /resume · esc picker · q quit
+AI picker: space toggle · enter create · a defaults · A all
 Default API: staging (https://api-staging.salad.ink)
-`)
+`, Version)
 }

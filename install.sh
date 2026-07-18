@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Install Salad Terminal onto PATH.
+# Install / update Salad Terminal onto PATH.
 #
 #   curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash
+#   salad update
 #
 # Or from a local checkout: ./install.sh
 set -euo pipefail
@@ -50,17 +51,15 @@ install_binary() {
 build_from_dir() {
   local root="$1"
   need_cmd go
-  echo "Building Salad Terminal…"
-  (cd "$root" && go build -o salad ./cmd/salad)
+  local ver
+  ver="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo dev)"
+  echo "Building Salad Terminal (${ver})…"
+  (cd "$root" && go build -ldflags "-X main.Version=${ver}" -o salad ./cmd/salad)
   install_binary "${root}/salad"
+  echo "Version: ${ver}"
 }
 
-# Local checkout (developer machine already has the repo).
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/go.mod" && -d "${SCRIPT_DIR}/cmd/salad" ]]; then
-  build_from_dir "$SCRIPT_DIR"
-else
-  # Remote one-liner: clone → build → install → cleanup.
+fetch_and_build() {
   need_cmd git
   need_cmd go
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/salad-terminal.XXXXXX")"
@@ -69,9 +68,22 @@ else
   echo "Fetching Salad Terminal (${REPO_REF})…"
   git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$TMP/src"
   build_from_dir "$TMP/src"
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# salad update / curl|bash always take latest from GitHub.
+# Local ./install.sh builds the checkout unless SALAD_FORCE_REMOTE=1.
+if [[ "${SALAD_FORCE_REMOTE:-}" == "1" ]]; then
+  fetch_and_build
+elif [[ -f "${SCRIPT_DIR}/go.mod" && -d "${SCRIPT_DIR}/cmd/salad" ]]; then
+  build_from_dir "$SCRIPT_DIR"
+else
+  fetch_and_build
 fi
 
 echo
 echo "Done. Next:"
-echo "  salad login"
+echo "  salad login   # once"
 echo "  salad"
+echo "  salad update  # later, when Terminal ships changes"

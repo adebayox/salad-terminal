@@ -417,6 +417,30 @@ func (c *Client) ListMembers(ctx context.Context, chatID string) ([]map[string]a
 	return out, nil
 }
 
+type AIProduct struct {
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+	Category    string `json:"category"`
+	Provider    string `json:"provider"`
+	HasAccess   bool   `json:"has_access"`
+	MinimumPlan string `json:"minimum_plan,omitempty"`
+}
+
+// ListAIProducts returns the same AI catalog the web new-chat modal uses.
+func (c *Client) ListAIProducts(ctx context.Context) ([]AIProduct, error) {
+	payload, err := c.do(ctx, http.MethodGet, "/api/ai-products?include_locked=true", nil)
+	if err != nil {
+		return nil, err
+	}
+	var wrapped struct {
+		Products []AIProduct `json:"products"`
+	}
+	if err := json.Unmarshal(payload, &wrapped); err != nil {
+		return nil, err
+	}
+	return wrapped.Products, nil
+}
+
 // CreateChat creates a normal Salad chat (same POST /api/chats as the web app).
 // New chats appear in Salad web immediately.
 func (c *Client) CreateChat(ctx context.Context, name string, aiProductSlugs []string) (*ChatPreview, error) {
@@ -428,7 +452,7 @@ func (c *Client) CreateChat(ctx context.Context, name string, aiProductSlugs []s
 		name = name[:100]
 	}
 	if len(aiProductSlugs) == 0 {
-		aiProductSlugs = []string{"gpt-5-4"}
+		return nil, fmt.Errorf("pick at least one AI")
 	}
 	payload, err := c.do(ctx, http.MethodPost, "/api/chats", map[string]any{
 		"name":             name,
