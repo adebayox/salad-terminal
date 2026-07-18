@@ -1,38 +1,27 @@
 # ∬alad Terminal
 
-Same Salad. In your terminal.
+Same Salad chats, in your terminal. Staging API is already the default — no env vars.
+
+## Install (once)
 
 ```bash
-go build -o salad ./cmd/salad
-./salad
+cd /Users/davidnifemi/code/salad-terminal
+./install.sh
 ```
 
-Sign in → pick a chat → collaborate with the same humans and models as salad.ink.  
-Local workspace tools attach only on terminal-initiated turns.
+If `~/.local/bin` isn’t on your PATH, the script tells you the one line to add.
 
-## Commands
+## Use
 
-| | |
-|---|---|
-| `salad` | Full Terminal UI |
-| `salad login` | Email/password |
-| `salad login --google` | Browser Google (PKCE loopback) |
-| `salad resume <chat-id>` | Open a chat |
-| `salad say …` | Headless send (attaches trusted workspace context) |
-| `salad workspace trust\|read\|git-status\|git-diff` | Local tools |
+```bash
+salad login
+salad
+```
 
-## In the TUI
+That’s it.
 
-- `@` — mention picker (Tab/Enter to insert)
-- `/git` `/diff` `/read <path>` `/trust` — local tools
-- `ctrl+t` — toggle attaching workspace context on send
-- `enter` send · `esc` back to chats · `ctrl+c` quit
+- Email/password, or `salad login --google`
+- Pick a chat → talk to the same AIs as the web app
+- `@` to mention · `/git` `/read` · `esc` back · `ctrl+c` quit
 
-## Environment
-
-- Default API: staging `https://api-staging.salad.ink`
-- Override: `SALAD_API_URL`
-- Optional: `SALAD_GOOGLE_CLIENT_ID`
-
-Contract: [docs/TERMINAL_CONTRACT.md](docs/TERMINAL_CONTRACT.md)  
-Signoff: [docs/DX_SIGNOFF.md](docs/DX_SIGNOFF.md)
+QA account (staging): `codex-live-qa@test.local` / `TestPass@123`
