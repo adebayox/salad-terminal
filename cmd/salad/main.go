@@ -61,15 +61,8 @@ func run(args []string) error {
 		if len(rest) == 0 {
 			return chat.List()
 		}
-		if rest[0] == "pick" {
-			id, err := chat.PickInteractive()
-			if err != nil {
-				return err
-			}
-			if err := chat.Resume(id); err != nil {
-				return err
-			}
-			return tui.Run(id)
+		if rest[0] == "pick" || rest[0] == "open" {
+			return tui.Run("")
 		}
 		if rest[0] == "participants" {
 			id := ""
@@ -92,11 +85,7 @@ func run(args []string) error {
 			}
 		}
 		if chatID == "" {
-			id, err := chat.PickInteractive()
-			if err != nil {
-				return err
-			}
-			chatID = id
+			return tui.Run("")
 		}
 		if err := chat.Resume(chatID); err != nil {
 			return err
@@ -186,25 +175,18 @@ func runWorkspace(args []string) error {
 }
 
 func printUsage() {
-	fmt.Print(`Salad Terminal — equal Salad surface (CLI)
+	fmt.Print(`∬alad Terminal — same Salad, in your repo
 
-Usage:
-  salad                      Open TUI (picks a chat if none active)
-  salad login [--base-url U] Log in with normal Salad user credentials
-  salad logout
-  salad whoami
-  salad chat                 List recent chats
-  salad chat pick            Pick a chat and open TUI
-  salad chat participants    Show participants for active chat
-  salad resume [chat-id]     Resume chat and open TUI (--no-tui to skip)
-  salad say <message>        Send to active chat (waits briefly for reply)
-  salad workspace …          Local trust / read / git / permissions
+  salad                 Open Salad (login → chats → collaborate)
+  salad resume <id>     Jump straight into a chat
+  salad login           Sign in with your Salad account
+  salad logout | whoami
+  salad chat            List chats (headless)
+  salad say <message>   Quick send to active chat
+  salad workspace …     Local trust / read / git / permissions
 
-Environment:
-  SALAD_API_URL     API base (default https://api.salad.ink)
-                    staging: https://api-staging.salad.ink
-  SALAD_CONFIG_DIR  Override credentials directory
-
-Contract: docs/TERMINAL_CONTRACT.md
+Same account and chats as salad.ink. Local tools stay on this machine.
+Default API: staging (https://api-staging.salad.ink)
+Override with SALAD_API_URL.
 `)
 }

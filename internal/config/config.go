@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	DefaultBaseURL = "https://api.salad.ink"
+	// Staging until Terminal collaboration matrix passes (see TERMINAL_CONTRACT.md).
+	DefaultBaseURL = "https://api-staging.salad.ink"
 	EnvBaseURL     = "SALAD_API_URL"
 	EnvConfigDir   = "SALAD_CONFIG_DIR"
 )

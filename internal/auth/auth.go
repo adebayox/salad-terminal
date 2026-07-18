@@ -28,8 +28,8 @@ func DeviceInfo(installID string) api.DeviceInfo {
 	}
 	return api.DeviceInfo{
 		InstallID:  installID,
-		Platform:   "unknown",
-		AppVersion: "0.1.0",
+		Platform:   "web",
+		AppVersion: "0.2.0-terminal",
 		DeviceName: "Salad Terminal (" + hostname + ")",
 	}
 }

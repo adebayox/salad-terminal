@@ -1,23 +1,27 @@
-# Salad Terminal
+# ∬alad Terminal
 
-CLI equal surface for Salad: normal user login, same chats, local tools only on terminal-initiated turns.
-
-See docs/TERMINAL_CONTRACT.md.
-
-## Build
+Same Salad. In your terminal. Same account, same chats, same AI collaborators.
 
 ```bash
 go build -o salad ./cmd/salad
+./salad
 ```
 
-## Quick start (staging)
+You’ll get the Salad surface: sign in → pick a chat → talk with the same humans and models as the web app. Local workspace tools stay on your machine and only apply to terminal-initiated work.
 
-```bash
-export SALAD_API_URL=https://<staging-api>
-./salad login
-./salad chat
-./salad resume <chat-id>
-./salad workspace trust
-```
+## Commands
 
-No device pairing. No MCP. Realtime v2 / consumer ACK is platform-owned and not required for this MVP.
+| | |
+|---|---|
+| `salad` | Full Terminal UI |
+| `salad resume <chat-id>` | Open a chat directly |
+| `salad login` / `logout` / `whoami` | Account |
+| `salad say …` | Headless send |
+| `salad workspace trust\|read\|git-status\|git-diff` | Local tools |
+
+## Environment
+
+- `SALAD_API_URL` — defaults to staging (`https://api-staging.salad.ink`) until Terminal is signed off
+- `SALAD_CONFIG_DIR` — credentials directory override
+
+See [docs/TERMINAL_CONTRACT.md](docs/TERMINAL_CONTRACT.md).
