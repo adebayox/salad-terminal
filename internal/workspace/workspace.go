@@ -64,6 +64,18 @@ func EnsureTrusted(root string) (string, error) {
 	return root, nil
 }
 
+// RequireTrusted returns the root only if already trusted (never prompts).
+func RequireTrusted(root string) (string, error) {
+	root, err := ResolveRoot(root)
+	if err != nil {
+		return "", err
+	}
+	if !IsTrusted(root) {
+		return "", fmt.Errorf("workspace not trusted (run: salad workspace trust, or /trust in TUI)")
+	}
+	return root, nil
+}
+
 func loadSaladIgnore(root string) []string {
 	defaults := []string{
 		".env", ".env.*", "*.pem", "*.key", "credentials.json",
@@ -111,7 +123,7 @@ func isIgnored(root, rel string, patterns []string) bool {
 
 // ReadFile reads a workspace-relative file if trusted and not ignored.
 func ReadFile(root, relPath string) (string, error) {
-	root, err := EnsureTrusted(root)
+	root, err := RequireTrusted(root)
 	if err != nil {
 		return "", err
 	}
@@ -135,7 +147,7 @@ func ReadFile(root, relPath string) (string, error) {
 }
 
 func GitStatus(root string) (string, error) {
-	root, err := EnsureTrusted(root)
+	root, err := RequireTrusted(root)
 	if err != nil {
 		return "", err
 	}
@@ -143,7 +155,7 @@ func GitStatus(root string) (string, error) {
 }
 
 func GitDiff(root string) (string, error) {
-	root, err := EnsureTrusted(root)
+	root, err := RequireTrusted(root)
 	if err != nil {
 		return "", err
 	}
@@ -151,7 +163,7 @@ func GitDiff(root string) (string, error) {
 }
 
 func PermissionsSummary(root string) (string, error) {
-	root, err := EnsureTrusted(root)
+	root, err := ResolveRoot(root)
 	if err != nil {
 		return "", err
 	}
@@ -159,7 +171,8 @@ func PermissionsSummary(root string) (string, error) {
 	fmt.Fprintf(&b, "workspace: %s\n", root)
 	fmt.Fprintf(&b, "trusted: %v\n", IsTrusted(root))
 	fmt.Fprintf(&b, "allowed tools: read, git-status, git-diff, permissions\n")
-	fmt.Fprintf(&b, "denied: shell exec, network tools, MCP, turn bridge (not yet)\n")
+	fmt.Fprintf(&b, "denied: shell exec, network tools, MCP\n")
+	fmt.Fprintf(&b, "terminal turns may attach code_context when trusted\n")
 	fmt.Fprintf(&b, "ignore patterns:\n")
 	for _, p := range loadSaladIgnore(root) {
 		fmt.Fprintf(&b, "  - %s\n", p)

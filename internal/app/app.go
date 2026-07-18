@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,7 +14,9 @@ import (
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/salad-ai/salad-terminal/internal/api"
 	"github.com/salad-ai/salad-terminal/internal/auth"
+	"github.com/salad-ai/salad-terminal/internal/bridge"
 	"github.com/salad-ai/salad-terminal/internal/config"
+	"github.com/salad-ai/salad-terminal/internal/realtime"
 	"github.com/salad-ai/salad-terminal/internal/theme"
 	"github.com/salad-ai/salad-terminal/internal/workspace"
 )
@@ -45,17 +48,14 @@ type model struct {
 	status string
 	err    string
 
-	// login
 	loginEmail string
 	loginPass  string
-	loginFocus int // 0 email 1 pass
+	loginFocus int
 
-	// chats
 	chats    []api.ChatPreview
 	chatIdx  int
 	chatLoad bool
 
-	// room
 	chatID       string
 	chatTitle    string
 	members      []member
@@ -65,6 +65,15 @@ type model struct {
 	sending      bool
 	workspaceOK  bool
 	workspaceDir string
+	live         string // "ws" | "poll" | ""
+	wsClient     *realtime.Client
+	wsEvents     <-chan realtime.Event
+	focusFiles   []string
+	attachTools  bool
+
+	mentionOpen bool
+	mentionIdx  int
+	mentionQ    string
 }
 
 type (
@@ -87,6 +96,13 @@ type (
 		messages []api.ChatMessage
 		err      error
 	}
+	wsEventMsg struct {
+		evt realtime.Event
+	}
+	wsReadyMsg struct {
+		ok  bool
+		err error
+	}
 	sentMsg struct {
 		msg *api.ChatMessage
 		err error
@@ -94,37 +110,37 @@ type (
 	loginDoneMsg struct {
 		err error
 	}
-	tickMsg time.Time
 )
 
 func Run(initialChatID string) error {
 	m := newModel(initialChatID)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
+	if m.wsClient != nil {
+		m.wsClient.Close()
+	}
 	return err
 }
 
 func newModel(initialChatID string) model {
 	ta := textarea.New()
-	ta.Placeholder = "Message this Salad chat…  (@name to mention)"
+	ta.Placeholder = "Message…  @ to mention · /git /read · enter send"
 	ta.ShowLineNumbers = false
 	ta.Prompt = "∬ "
 	ta.CharLimit = 8000
 	ta.SetHeight(3)
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
-
-	vp := viewport.New(80, 20)
 	root, _ := workspace.ResolveRoot("")
 	return model{
 		screen:       screenBoot,
 		status:       "Opening Salad…",
 		composer:     ta,
-		viewport:     vp,
+		viewport:     viewport.New(80, 20),
 		chatID:       initialChatID,
 		workspaceDir: root,
 		workspaceOK:  workspace.IsTrusted(root),
-		loginFocus:   0,
+		attachTools:  true,
 	}
 }
 
@@ -196,7 +212,7 @@ func loadMembers(ctx context.Context, client *api.Client, chatID string, boot *a
 }
 
 func pollCmd(client *api.Client, chatID string) tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		boot, err := client.ChatBootstrap(ctx, chatID)
@@ -207,19 +223,50 @@ func pollCmd(client *api.Client, chatID string) tea.Cmd {
 	})
 }
 
-func sendCmd(client *api.Client, chatID, content string) tea.Cmd {
+func wsListenCmd(baseURL, token string) tea.Cmd {
+	return func() tea.Msg {
+		client := realtime.New(baseURL, token)
+		ch, err := client.Connect()
+		if err != nil {
+			return wsReadyMsg{ok: false, err: err}
+		}
+		return wsSessionMsg{client: client, ch: ch}
+	}
+}
+
+type wsSessionMsg struct {
+	client *realtime.Client
+	ch     <-chan realtime.Event
+}
+
+func nextWSCmd(ch <-chan realtime.Event) tea.Cmd {
+	return func() tea.Msg {
+		evt, ok := <-ch
+		if !ok {
+			return wsReadyMsg{ok: false, err: fmt.Errorf("websocket closed")}
+		}
+		return wsEventMsg{evt: evt}
+	}
+}
+
+func sendCmd(client *api.Client, chatID string, req api.SendMessageRequest) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		msg, err := client.SendMessage(ctx, chatID, content)
+		msg, err := client.SendMessageRequest(ctx, chatID, req)
 		return sentMsg{msg: msg, err: err}
 	}
 }
 
 func loginCmd(email, password string) tea.Cmd {
 	return func() tea.Msg {
-		err := auth.Login(config.BaseURL(), email, password)
-		return loginDoneMsg{err: err}
+		return loginDoneMsg{err: auth.Login(config.BaseURL(), email, password)}
+	}
+}
+
+func loginGoogleCmd() tea.Cmd {
+	return func() tea.Msg {
+		return loginDoneMsg{err: auth.LoginGoogleBrowser(config.BaseURL())}
 	}
 }
 
@@ -238,22 +285,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.screen = screenLogin
 			m.status = "Sign in to Salad"
-			m.err = ""
 			return m, nil
 		}
 		m.client = msg.client
 		m.creds = msg.creds
-		m.err = ""
 		if m.chatID != "" {
 			m.screen = screenRoom
 			m.status = "Loading chat…"
-			m.composer.Focus()
-			return m, openRoomCmd(m.client, m.chatID)
+			return m, tea.Batch(openRoomCmd(m.client, m.chatID), wsListenCmd(config.BaseURL(), m.creds.AccessToken))
 		}
 		m.screen = screenChats
 		m.status = "Your Salad chats"
 		m.chatLoad = true
-		return m, loadChatsCmd(m.client)
+		return m, tea.Batch(loadChatsCmd(m.client), wsListenCmd(config.BaseURL(), m.creds.AccessToken))
 
 	case loginDoneMsg:
 		if msg.err != nil {
@@ -269,10 +313,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.client = client
 		m.creds = creds
 		m.screen = screenChats
-		m.status = "Your Salad chats"
 		m.err = ""
+		m.status = "Your Salad chats"
 		m.chatLoad = true
-		return m, loadChatsCmd(m.client)
+		return m, tea.Batch(loadChatsCmd(m.client), wsListenCmd(config.BaseURL(), m.creds.AccessToken))
 
 	case chatsMsg:
 		m.chatLoad = false
@@ -285,11 +329,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.chatIdx >= len(m.chats) {
 			m.chatIdx = 0
 		}
-		if len(m.chats) == 0 {
-			m.status = "No chats yet — open one in Salad web, then refresh"
-		} else {
-			m.status = fmt.Sprintf("%d chats · think together", len(m.chats))
-		}
+		m.status = fmt.Sprintf("%d chats · think together", len(m.chats))
 		return m, nil
 
 	case roomMsg:
@@ -306,26 +346,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.composer.Focus()
 		m.refreshViewport()
 		m.viewport.GotoBottom()
-		return m, pollCmd(m.client, m.chatID)
+		cmds := []tea.Cmd{pollCmd(m.client, m.chatID)}
+		return m, tea.Batch(cmds...)
+
+	case wsSessionMsg:
+		if m.wsClient != nil {
+			m.wsClient.Close()
+		}
+		m.wsClient = msg.client
+		m.wsEvents = msg.ch
+		m.live = "ws"
+		m.status = "Live · websocket"
+		return m, nextWSCmd(m.wsEvents)
+
+	case wsReadyMsg:
+		if !msg.ok {
+			m.live = "poll"
+			m.wsEvents = nil
+			if msg.err != nil {
+				m.status = "Live · polling (ws unavailable)"
+			}
+			return m, nil
+		}
+		return m, nil
+
+	case wsEventMsg:
+		if m.wsEvents == nil {
+			return m, nil
+		}
+		cmd := nextWSCmd(m.wsEvents)
+		if m.screen == screenRoom && (msg.evt.ChatID == "" || msg.evt.ChatID == m.chatID) && realtime.IsChatSignal(msg.evt) {
+			return m, tea.Batch(cmd, refreshRoomCmd(m.client, m.chatID))
+		}
+		return m, cmd
 
 	case pollMsg:
 		if m.screen != screenRoom {
 			return m, nil
 		}
-		if msg.err == nil && len(msg.messages) > 0 {
-			changed := len(msg.messages) != len(m.messages)
-			if !changed && len(msg.messages) > 0 && len(m.messages) > 0 {
-				changed = msg.messages[len(msg.messages)-1].ID != m.messages[len(m.messages)-1].ID ||
-					msg.messages[len(msg.messages)-1].Body != m.messages[len(m.messages)-1].Body
-			}
-			if changed {
-				atBottom := m.viewport.AtBottom()
-				m.messages = msg.messages
-				m.refreshViewport()
-				if atBottom {
-					m.viewport.GotoBottom()
-				}
-			}
+		if msg.err == nil {
+			m.applyMessages(msg.messages)
+		}
+		if m.live != "ws" {
+			m.live = "poll"
 		}
 		return m, pollCmd(m.client, m.chatID)
 
@@ -342,7 +405,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 		}
 		m.status = "Sent · waiting for collaborators…"
-		return m, nil
+		return m, refreshRoomCmd(m.client, m.chatID)
 
 	case tea.KeyMsg:
 		switch m.screen {
@@ -354,25 +417,59 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateRoom(msg)
 		}
 	}
+	return m, nil
+}
 
-	var cmd tea.Cmd
-	if m.screen == screenRoom {
-		m.composer, cmd = m.composer.Update(msg)
+func refreshRoomCmd(client *api.Client, chatID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		boot, err := client.ChatBootstrap(ctx, chatID)
+		if err != nil {
+			return pollMsg{err: err}
+		}
+		return pollMsg{messages: boot.Messages}
 	}
-	return m, cmd
+}
+
+func (m *model) applyMessages(messages []api.ChatMessage) {
+	if len(messages) == 0 {
+		return
+	}
+	changed := len(messages) != len(m.messages)
+	if !changed && len(m.messages) > 0 {
+		last := m.messages[len(m.messages)-1]
+		next := messages[len(messages)-1]
+		changed = last.ID != next.ID || last.Body != next.Body
+	}
+	if !changed {
+		return
+	}
+	atBottom := m.viewport.AtBottom()
+	m.messages = messages
+	m.refreshViewport()
+	if atBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 func (m model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	case "g":
+		if m.loginFocus == 0 && m.loginEmail == "" {
+			m.status = "Opening Google…"
+			m.err = ""
+			return m, loginGoogleCmd()
+		}
 	case "tab", "down":
 		m.loginFocus = (m.loginFocus + 1) % 2
 	case "shift+tab", "up":
 		m.loginFocus = (m.loginFocus + 1) % 2
 	case "enter":
 		if strings.TrimSpace(m.loginEmail) == "" || m.loginPass == "" {
-			m.err = "Email and password required"
+			m.err = "Email and password required — or press g for Google"
 			return m, nil
 		}
 		m.status = "Signing in…"
@@ -405,7 +502,6 @@ func (m model) updateChats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "r":
 		m.chatLoad = true
-		m.status = "Refreshing…"
 		return m, loadChatsCmd(m.client)
 	case "up", "k":
 		if m.chatIdx > 0 {
@@ -432,8 +528,15 @@ func (m model) updateChats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mentionOpen {
+		return m.updateMention(msg)
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
+		if m.wsClient != nil {
+			m.wsClient.Close()
+		}
 		return m, tea.Quit
 	case "esc":
 		m.screen = screenChats
@@ -444,11 +547,18 @@ func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+p":
 		m.status = participantsLine(m.members)
 		return m, nil
+	case "ctrl+t":
+		m.attachTools = !m.attachTools
+		if m.attachTools {
+			m.status = "Local tools attached on send"
+		} else {
+			m.status = "Local tools off for next sends"
+		}
+		return m, nil
 	case "enter":
 		return m.sendComposer()
 	}
 
-	// Prefer chat send on Enter; alt+enter inserts a newline.
 	if msg.Type == tea.KeyEnter && !msg.Alt {
 		return m.sendComposer()
 	}
@@ -459,32 +569,252 @@ func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.composer, cmd = m.composer.Update(msg)
-	if strings.Contains(m.composer.Value(), "@") {
-		m.status = "Mention: " + mentionHints(m.members)
-	} else if m.status == "" || strings.HasPrefix(m.status, "Mention:") {
-		m.status = "Live · same thread as Salad web"
+	value := m.composer.Value()
+
+	// Slash local tools (do not send to chat).
+	if strings.HasPrefix(strings.TrimSpace(value), "/") && strings.HasSuffix(value, "\n") {
+		return m.runSlash(strings.TrimSpace(value))
 	}
+
+	if at := strings.LastIndex(value, "@"); at >= 0 {
+		tail := value[at+1:]
+		if !strings.ContainsAny(tail, " \n\t") {
+			m.mentionOpen = true
+			m.mentionQ = strings.ToLower(tail)
+			m.mentionIdx = 0
+			m.status = "Mention someone"
+			return m, cmd
+		}
+	}
+	m.mentionOpen = false
 	var vpCmd tea.Cmd
 	m.viewport, vpCmd = m.viewport.Update(msg)
 	return m, tea.Batch(cmd, vpCmd)
 }
 
-func (m model) sendComposer() (tea.Model, tea.Cmd) {
-	if m.sending || m.client == nil || strings.TrimSpace(m.chatID) == "" {
+func (m model) updateMention(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	filtered := m.filteredMentions()
+	switch msg.String() {
+	case "esc":
+		m.mentionOpen = false
+		return m, nil
+	case "up":
+		if m.mentionIdx > 0 {
+			m.mentionIdx--
+		}
+		return m, nil
+	case "down", "tab":
+		if m.mentionIdx < len(filtered)-1 {
+			m.mentionIdx++
+		}
+		return m, nil
+	case "enter":
+		if len(filtered) == 0 {
+			m.mentionOpen = false
+			return m, nil
+		}
+		pick := filtered[m.mentionIdx]
+		m.insertMention(pick)
+		m.mentionOpen = false
+		return m, nil
+	case "backspace":
+		var cmd tea.Cmd
+		m.composer, cmd = m.composer.Update(msg)
+		value := m.composer.Value()
+		if at := strings.LastIndex(value, "@"); at < 0 {
+			m.mentionOpen = false
+		} else {
+			m.mentionQ = strings.ToLower(value[at+1:])
+		}
+		return m, cmd
+	default:
+		var cmd tea.Cmd
+		m.composer, cmd = m.composer.Update(msg)
+		value := m.composer.Value()
+		if at := strings.LastIndex(value, "@"); at >= 0 {
+			tail := value[at+1:]
+			if strings.ContainsAny(tail, " \n\t") {
+				m.mentionOpen = false
+			} else {
+				m.mentionQ = strings.ToLower(tail)
+			}
+		} else {
+			m.mentionOpen = false
+		}
+		return m, cmd
+	}
+}
+
+func (m *model) insertMention(mem member) {
+	value := m.composer.Value()
+	at := strings.LastIndex(value, "@")
+	if at < 0 {
+		return
+	}
+	slug := firstNonEmpty(mem.Slug, slugify(mem.DisplayName))
+	m.composer.SetValue(value[:at] + "@" + slug + " ")
+	m.composer.CursorEnd()
+}
+
+func (m model) filteredMentions() []member {
+	q := m.mentionQ
+	out := make([]member, 0, len(m.members))
+	for _, mem := range m.members {
+		hay := strings.ToLower(mem.DisplayName + " " + mem.Slug)
+		if q == "" || strings.Contains(hay, q) {
+			out = append(out, mem)
+		}
+	}
+	return out
+}
+
+func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
+	m.composer.SetValue("")
+	parts := strings.Fields(strings.TrimPrefix(line, "/"))
+	if len(parts) == 0 {
 		return m, nil
 	}
-	if m.chatTitle == "" {
-		return m, nil // still opening room
+	switch parts[0] {
+	case "git", "status":
+		out, err := workspace.GitStatus(m.workspaceDir)
+		if err != nil {
+			m.err = err.Error()
+		} else {
+			m.status = "git status attached for next send"
+			m.focusFiles = nil
+			_ = out
+			// stash via diagnostics by marking tools on
+			m.attachTools = true
+			m.err = ""
+			// show in transcript as local note
+			m.messages = append(m.messages, api.ChatMessage{AuthorName: "local", Role: "system", Body: "git status:\n" + out})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+		}
+	case "diff":
+		out, err := workspace.GitDiff(m.workspaceDir)
+		if err != nil {
+			m.err = err.Error()
+		} else {
+			m.attachTools = true
+			m.messages = append(m.messages, api.ChatMessage{AuthorName: "local", Role: "system", Body: "git diff --stat:\n" + out})
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+		}
+	case "read":
+		if len(parts) < 2 {
+			m.err = "usage: /read <path>"
+			return m, nil
+		}
+		rel := parts[1]
+		content, err := workspace.ReadFile(m.workspaceDir, rel)
+		if err != nil {
+			m.err = err.Error()
+			return m, nil
+		}
+		m.focusFiles = appendUnique(m.focusFiles, filepath.Clean(rel))
+		m.attachTools = true
+		m.messages = append(m.messages, api.ChatMessage{AuthorName: "local", Role: "system", Body: "attached " + rel + "\n" + truncate(content, 1200)})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		m.status = "Attached " + rel + " for next send"
+	case "trust":
+		if err := workspace.Trust(m.workspaceDir); err != nil {
+			m.err = err.Error()
+		} else {
+			m.workspaceOK = true
+			m.status = "Workspace trusted"
+		}
+	case "tools":
+		m.attachTools = !m.attachTools
+		m.status = fmt.Sprintf("attachTools=%v", m.attachTools)
+	default:
+		m.err = "commands: /git /diff /read <path> /trust /tools"
+	}
+	return m, nil
+}
+
+func (m model) sendComposer() (tea.Model, tea.Cmd) {
+	if m.sending || m.client == nil || m.chatID == "" || m.chatTitle == "" {
+		return m, nil
 	}
 	content := strings.TrimSpace(m.composer.Value())
 	if content == "" {
 		return m, nil
 	}
+	// Intercept slash commands typed without trailing newline handling.
+	if strings.HasPrefix(content, "/") {
+		return m.runSlash(content)
+	}
+
+	req := api.SendMessageRequest{
+		Content: content,
+		Metadata: map[string]any{
+			"client_surface": "salad_terminal",
+			"terminal": map[string]any{
+				"workspace_trusted": m.workspaceOK,
+				"attach_tools":      m.attachTools,
+			},
+		},
+	}
+	mentions, tagged, hint := parseMentions(content, m.members)
+	req.ExplicitMentions = mentions
+	req.TaggedMembers = tagged
+	req.TargetHint = hint
+
+	if m.attachTools && m.workspaceOK {
+		if codeCtx, _, err := bridge.BuildCodeContext(m.workspaceDir, m.focusFiles); err == nil {
+			req.CodeContext = codeCtx
+		}
+	}
+
 	m.sending = true
 	m.err = ""
 	m.status = "Sending…"
 	m.composer.SetValue("")
-	return m, sendCmd(m.client, m.chatID, content)
+	m.mentionOpen = false
+	return m, sendCmd(m.client, m.chatID, req)
+}
+
+func parseMentions(content string, members []member) ([]api.ExplicitMention, []string, *api.TargetHint) {
+	var mentions []api.ExplicitMention
+	var tagged []string
+	var slugs []string
+	var names []string
+	var ids []string
+	for _, mem := range members {
+		slug := firstNonEmpty(mem.Slug, slugify(mem.DisplayName))
+		token := "@" + slug
+		idx := strings.Index(strings.ToLower(content), strings.ToLower(token))
+		if idx < 0 {
+			continue
+		}
+		mentions = append(mentions, api.ExplicitMention{
+			MemberID: mem.ID,
+			Token:    token,
+			Start:    idx,
+			End:      idx + len(token),
+		})
+		if mem.ID != "" {
+			tagged = append(tagged, mem.ID)
+			ids = append(ids, mem.ID)
+		}
+		slugs = append(slugs, slug)
+		names = append(names, mem.DisplayName)
+	}
+	if strings.Contains(strings.ToLower(content), "@everyone") {
+		tagged = append(tagged, "@everyone")
+	}
+	if len(mentions) == 0 && len(tagged) == 0 {
+		return nil, nil, nil
+	}
+	hint := &api.TargetHint{
+		MemberIDs:    ids,
+		Slugs:        slugs,
+		DisplayNames: names,
+		Source:       "salad_terminal",
+	}
+	return mentions, tagged, hint
 }
 
 func (m *model) layout() {
@@ -494,17 +824,18 @@ func (m *model) layout() {
 	if m.height <= 0 {
 		m.height = 24
 	}
-	header := 3
-	footer := 2
 	composerH := 5
-	vpH := m.height - header - footer - composerH
+	mentionH := 0
+	if m.mentionOpen {
+		mentionH = 6
+	}
+	vpH := m.height - 3 - 2 - composerH - mentionH
 	if vpH < 5 {
 		vpH = 5
 	}
 	m.viewport.Width = m.width - 2
 	m.viewport.Height = vpH
 	m.composer.SetWidth(m.width - 4)
-	m.composer.SetHeight(3)
 }
 
 func (m *model) refreshViewport() {
@@ -527,6 +858,10 @@ func (m model) renderTranscript() string {
 			body = "…"
 		}
 		wrapped := wordwrap.String(body, width-6)
+		if strings.EqualFold(msg.Role, "system") || author == "local" {
+			b.WriteString(theme.MutedText().Render("⚙ "+wrapped) + "\n\n")
+			continue
+		}
 		if isAssistant(msg) {
 			b.WriteString(theme.AIHeader(author).Render("● "+author) + "\n")
 			b.WriteString(theme.AIBody().Width(width-4).Render(wrapped) + "\n\n")
@@ -541,7 +876,7 @@ func (m model) renderTranscript() string {
 func (m model) View() string {
 	switch m.screen {
 	case screenBoot:
-		return theme.Header().Width(m.width).Render("∬alad") + "\n\n" + theme.MutedText().Render(m.status)
+		return theme.Header().Width(max(m.width, 40)).Render("∬alad") + "\n\n" + theme.MutedText().Render(m.status)
 	case screenLogin:
 		return m.viewLogin()
 	case screenChats:
@@ -557,8 +892,7 @@ func (m model) viewLogin() string {
 	w := max(m.width, 60)
 	title := theme.Header().Width(w).Render("∬alad  ·  Terminal")
 	sub := theme.MutedText().Render("Same account. Same chats. Think together from your repo.")
-	emailLabel := "email"
-	passLabel := "password"
+	emailLabel, passLabel := "email", "password"
 	if m.loginFocus == 0 {
 		emailLabel = theme.Brand().Render("▸ email")
 	} else {
@@ -572,15 +906,14 @@ func (m model) viewLogin() string {
 	if passVal == "" {
 		passVal = theme.MutedText().Render("••••••••")
 	}
-	form := fmt.Sprintf("%s\n%s\n\n%s\n%s\n", emailLabel, emailVal, passLabel, passVal)
-	box := theme.Composer().Width(min(w-4, 56)).Render(form)
+	form := theme.Composer().Width(min(w-4, 56)).Render(fmt.Sprintf("%s\n%s\n\n%s\n%s\n", emailLabel, emailVal, passLabel, passVal))
 	errLine := ""
 	if m.err != "" {
 		errLine = "\n" + theme.Error().Render(m.err)
 	}
+	help := theme.Footer().Width(w).Render("enter sign in · g Google browser login · tab fields · q quit")
 	host := theme.MutedText().Render("API " + config.BaseURL())
-	help := theme.Footer().Width(w).Render("enter sign in · tab fields · q quit")
-	return lipgloss.JoinVertical(lipgloss.Left, title, sub, "", box, errLine, "", host, help)
+	return lipgloss.JoinVertical(lipgloss.Left, title, sub, "", form, errLine, "", host, help)
 }
 
 func (m model) viewChats() string {
@@ -589,7 +922,11 @@ func (m model) viewChats() string {
 	if m.creds != nil {
 		who = firstNonEmpty(m.creds.Name, m.creds.Email)
 	}
-	title := theme.Header().Width(w).Render(fmt.Sprintf("∬alad  ·  %s", firstNonEmpty(who, "you")))
+	live := m.live
+	if live == "" {
+		live = "connecting"
+	}
+	title := theme.Header().Width(w).Render(fmt.Sprintf("∬alad  ·  %s  ·  %s", firstNonEmpty(who, "you"), live))
 	sub := theme.MutedText().Render(m.status)
 	var list strings.Builder
 	if m.chatLoad {
@@ -613,13 +950,11 @@ func (m model) viewChats() string {
 			if members == "" {
 				members = "Salad chat"
 			}
-			line := fmt.Sprintf("%s %s", unread, firstNonEmpty(chat.Title, "Untitled"))
-			meta := theme.MutedText().Render("  " + members)
-			row := line + "\n" + meta
+			row := fmt.Sprintf("%s %s\n  %s", unread, firstNonEmpty(chat.Title, "Untitled"), theme.MutedText().Render(members))
 			if i == m.chatIdx {
-				list.WriteString(theme.Selected().Width(w - 2).Render(row) + "\n")
+				list.WriteString(theme.Selected().Width(w-2).Render(row) + "\n")
 			} else {
-				list.WriteString(theme.ListItem().Width(w - 2).Render(row) + "\n")
+				list.WriteString(theme.ListItem().Width(w-2).Render(row) + "\n")
 			}
 		}
 	}
@@ -637,9 +972,21 @@ func (m model) viewRoom() string {
 	if m.workspaceOK {
 		trust = "workspace trusted"
 	}
-	header := theme.Header().Width(w).Render(fmt.Sprintf("∬alad  ·  %s", firstNonEmpty(m.chatTitle, "Chat")))
+	tools := "tools on"
+	if !m.attachTools {
+		tools = "tools off"
+	}
+	live := m.live
+	if live == "" {
+		live = "…"
+	}
+	header := theme.Header().Width(w).Render(fmt.Sprintf("∬alad  ·  %s  ·  %s", firstNonEmpty(m.chatTitle, "Chat"), live))
 	people := theme.MutedText().Render(participantsLine(m.members))
 	body := m.viewport.View()
+	mention := ""
+	if m.mentionOpen {
+		mention = m.renderMentionPicker(w)
+	}
 	composer := theme.Composer().Width(w - 2).Render(m.composer.View())
 	status := m.status
 	if m.sending {
@@ -648,8 +995,31 @@ func (m model) viewRoom() string {
 	if m.err != "" {
 		status = m.err
 	}
-	footer := theme.Footer().Width(w).Render(fmt.Sprintf("%s  ·  %s  ·  enter send · alt+enter newline · esc chats · ctrl+p people · ctrl+c quit", status, trust))
-	return lipgloss.JoinVertical(lipgloss.Left, header, people, body, composer, footer)
+	footer := theme.Footer().Width(w).Render(fmt.Sprintf("%s  ·  %s  ·  %s  ·  enter send · @ mention · /read · ctrl+t tools · esc chats", status, trust, tools))
+	return lipgloss.JoinVertical(lipgloss.Left, header, people, body, mention, composer, footer)
+}
+
+func (m model) renderMentionPicker(w int) string {
+	filtered := m.filteredMentions()
+	if len(filtered) == 0 {
+		return theme.MutedText().Render("  no matches")
+	}
+	var b strings.Builder
+	b.WriteString(theme.MutedText().Render("  Mention") + "\n")
+	limit := min(5, len(filtered))
+	for i := 0; i < limit; i++ {
+		mem := filtered[i]
+		label := fmt.Sprintf("@%s  %s", firstNonEmpty(mem.Slug, slugify(mem.DisplayName)), mem.DisplayName)
+		if strings.EqualFold(mem.MemberType, "ai") || strings.EqualFold(mem.MemberType, "app") {
+			label += " · AI"
+		}
+		if i == m.mentionIdx {
+			b.WriteString(theme.Selected().Width(min(w-4, 60)).Render(label) + "\n")
+		} else {
+			b.WriteString(theme.ListItem().Render(label) + "\n")
+		}
+	}
+	return b.String()
 }
 
 func isAssistant(msg api.ChatMessage) bool {
@@ -681,23 +1051,6 @@ func participantsLine(members []member) string {
 	return "With " + strings.Join(names, " · ")
 }
 
-func mentionHints(members []member) string {
-	parts := make([]string, 0, len(members))
-	for _, mem := range members {
-		slug := firstNonEmpty(mem.Slug, slugify(mem.DisplayName))
-		if slug != "" {
-			parts = append(parts, "@"+slug)
-		}
-	}
-	if len(parts) == 0 {
-		return "@someone"
-	}
-	if len(parts) > 6 {
-		parts = parts[:6]
-	}
-	return strings.Join(parts, " ")
-}
-
 func slugify(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	name = strings.ReplaceAll(name, " ", "-")
@@ -723,6 +1076,22 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func appendUnique(list []string, item string) []string {
+	for _, existing := range list {
+		if existing == item {
+			return list
+		}
+	}
+	return append(list, item)
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func min(a, b int) int {

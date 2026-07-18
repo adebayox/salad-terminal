@@ -31,6 +31,14 @@ func run(args []string) error {
 		return nil
 	case "login":
 		baseURL := config.BaseURL()
+		for i := 0; i < len(rest); i++ {
+			if rest[i] == "--google" || rest[i] == "google" {
+				return auth.LoginGoogleBrowser(baseURL)
+			}
+			if rest[i] == "--base-url" && i+1 < len(rest) {
+				baseURL = rest[i+1]
+			}
+		}
 		if len(rest) >= 2 && rest[0] == "--email" {
 			email := rest[1]
 			password := ""
@@ -139,6 +147,9 @@ func runWorkspace(args []string) error {
 		if len(args) < 2 {
 			return fmt.Errorf("usage: salad workspace read <path>")
 		}
+		if _, err := workspace.EnsureTrusted(""); err != nil {
+			return err
+		}
 		content, err := workspace.ReadFile("", args[1])
 		if err != nil {
 			return err
@@ -149,6 +160,9 @@ func runWorkspace(args []string) error {
 		}
 		return nil
 	case "git-status", "status":
+		if _, err := workspace.EnsureTrusted(""); err != nil {
+			return err
+		}
 		out, err := workspace.GitStatus("")
 		if err != nil {
 			return err
@@ -156,6 +170,9 @@ func runWorkspace(args []string) error {
 		fmt.Print(out)
 		return nil
 	case "git-diff", "diff":
+		if _, err := workspace.EnsureTrusted(""); err != nil {
+			return err
+		}
 		out, err := workspace.GitDiff("")
 		if err != nil {
 			return err
@@ -179,14 +196,15 @@ func printUsage() {
 
   salad                 Open Salad (login → chats → collaborate)
   salad resume <id>     Jump straight into a chat
-  salad login           Sign in with your Salad account
+  salad login           Email/password sign-in
+  salad login --google  Browser Google OAuth (PKCE loopback)
   salad logout | whoami
   salad chat            List chats (headless)
   salad say <message>   Quick send to active chat
   salad workspace …     Local trust / read / git / permissions
 
-Same account and chats as salad.ink. Local tools stay on this machine.
+In the TUI: @ mention · /git /diff /read <path> · ctrl+t toggle tools
+Same account and chats as Salad web. Local tools only on terminal turns.
 Default API: staging (https://api-staging.salad.ink)
-Override with SALAD_API_URL.
 `)
 }

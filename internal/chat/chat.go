@@ -11,7 +11,9 @@ import (
 
 	"github.com/salad-ai/salad-terminal/internal/api"
 	"github.com/salad-ai/salad-terminal/internal/auth"
+	"github.com/salad-ai/salad-terminal/internal/bridge"
 	"github.com/salad-ai/salad-terminal/internal/config"
+	"github.com/salad-ai/salad-terminal/internal/workspace"
 )
 
 const listLimit = 15
@@ -179,7 +181,20 @@ func Send(chatID, content string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	msg, err := client.SendMessage(ctx, chatID, content)
+
+	req := api.SendMessageRequest{
+		Content: content,
+		Metadata: map[string]any{
+			"client_surface": "salad_terminal",
+		},
+	}
+	root, _ := workspace.ResolveRoot("")
+	if workspace.IsTrusted(root) {
+		if codeCtx, _, bridgeErr := bridge.BuildCodeContext(root, nil); bridgeErr == nil {
+			req.CodeContext = codeCtx
+		}
+	}
+	msg, err := client.SendMessageRequest(ctx, chatID, req)
 	if err != nil {
 		return err
 	}
@@ -187,11 +202,10 @@ func Send(chatID, content string) error {
 	body := firstNonEmpty(msg.Body, content)
 	fmt.Printf("[%s] %s\n", author, body)
 
-	// Best-effort: wait briefly for an assistant reply on terminal-initiated turns.
 	if reply := waitForAssistantReply(ctx, client, chatID, msg.ID, 20*time.Second); reply != nil {
 		fmt.Printf("[%s] %s\n", firstNonEmpty(reply.AuthorName, "assistant"), strings.TrimSpace(reply.Body))
 	} else {
-		fmt.Println("(still waiting on assistant — check with: salad resume --no-tui <chat-id>)")
+		fmt.Println("(still waiting on assistant — open: salad resume <chat-id>)")
 	}
 	return nil
 }

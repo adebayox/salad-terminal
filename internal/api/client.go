@@ -88,8 +88,45 @@ type ChatBootstrapResponse struct {
 	Messages []ChatMessage `json:"messages"`
 }
 
+type ExplicitMention struct {
+	MemberID string `json:"member_id,omitempty"`
+	Token    string `json:"token,omitempty"`
+	Start    int    `json:"start,omitempty"`
+	End      int    `json:"end,omitempty"`
+}
+
+type OpenFileContent struct {
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Language  string `json:"language"`
+	LineCount int    `json:"line_count"`
+}
+
+type CodeContext struct {
+	SelectedCode     string            `json:"selected_code,omitempty"`
+	SelectedFile     string            `json:"selected_file,omitempty"`
+	Language         string            `json:"language,omitempty"`
+	OpenFiles        []string          `json:"open_files,omitempty"`
+	OpenFilesContent []OpenFileContent `json:"open_files_content,omitempty"`
+	Diagnostics      []string          `json:"diagnostics,omitempty"`
+	WorkspaceRoot    string            `json:"workspace_root,omitempty"`
+}
+
 type SendMessageRequest struct {
-	Content string `json:"content"`
+	Content          string            `json:"content"`
+	ClientMessageID  string            `json:"client_message_id,omitempty"`
+	TaggedMembers    []string          `json:"tagged_members,omitempty"`
+	ExplicitMentions []ExplicitMention `json:"explicit_mentions,omitempty"`
+	Metadata         map[string]any    `json:"metadata,omitempty"`
+	CodeContext      *CodeContext      `json:"code_context,omitempty"`
+	TargetHint       *TargetHint       `json:"target_hint,omitempty"`
+}
+
+type TargetHint struct {
+	MemberIDs    []string `json:"member_ids,omitempty"`
+	Slugs        []string `json:"slugs,omitempty"`
+	DisplayNames []string `json:"display_names,omitempty"`
+	Source       string   `json:"source,omitempty"`
 }
 
 type APIError struct {
@@ -246,6 +283,17 @@ func (c *Client) Login(ctx context.Context, email, password string, device Devic
 	return &out, err
 }
 
+func (c *Client) LoginGoogle(ctx context.Context, code, codeVerifier, redirectURI string, device DeviceInfo) (*AuthResponse, error) {
+	var out AuthResponse
+	err := c.doJSON(ctx, http.MethodPost, "/api/mobile/auth/google", map[string]any{
+		"code":          code,
+		"code_verifier": codeVerifier,
+		"redirect_uri":  redirectURI,
+		"device_info":    device,
+	}, &out)
+	return &out, err
+}
+
 func (c *Client) Refresh(ctx context.Context, refreshToken string, device DeviceInfo) (*AuthResponse, error) {
 	var out AuthResponse
 	err := c.doJSON(ctx, http.MethodPost, "/api/mobile/auth/refresh", map[string]any{
@@ -326,7 +374,14 @@ func (c *Client) ListMessages(ctx context.Context, chatID string) ([]ChatMessage
 }
 
 func (c *Client) SendMessage(ctx context.Context, chatID, content string) (*ChatMessage, error) {
-	payload, err := c.do(ctx, http.MethodPost, "/api/chats/"+chatID+"/messages", SendMessageRequest{Content: content})
+	return c.SendMessageRequest(ctx, chatID, SendMessageRequest{Content: content})
+}
+
+func (c *Client) SendMessageRequest(ctx context.Context, chatID string, req SendMessageRequest) (*ChatMessage, error) {
+	if req.ClientMessageID == "" {
+		req.ClientMessageID = fmt.Sprintf("term-%d", time.Now().UnixNano())
+	}
+	payload, err := c.do(ctx, http.MethodPost, "/api/chats/"+chatID+"/messages", req)
 	if err != nil {
 		return nil, err
 	}
