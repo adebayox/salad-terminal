@@ -31,6 +31,14 @@ type ActiveChat struct {
 	Title  string `json:"title,omitempty"`
 }
 
+// WorkspaceBinding ties a local repo path to a Salad chat (Claude Code / Codex style continue).
+type WorkspaceBinding struct {
+	ChatID string `json:"chat_id"`
+	Title  string `json:"title,omitempty"`
+}
+
+type WorkspaceBindings map[string]WorkspaceBinding
+
 func Dir() (string, error) {
 	if override := os.Getenv(EnvConfigDir); override != "" {
 		return override, nil
@@ -167,4 +175,85 @@ func SaveActiveChat(active *ActiveChat) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+func workspaceBindingsPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "workspace_chats.json"), nil
+}
+
+func LoadWorkspaceBindings() (WorkspaceBindings, error) {
+	path, err := workspaceBindingsPath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return WorkspaceBindings{}, nil
+		}
+		return nil, err
+	}
+	var bindings WorkspaceBindings
+	if err := json.Unmarshal(data, &bindings); err != nil {
+		return nil, err
+	}
+	if bindings == nil {
+		bindings = WorkspaceBindings{}
+	}
+	return bindings, nil
+}
+
+func SaveWorkspaceBindings(bindings WorkspaceBindings) error {
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path, err := workspaceBindingsPath()
+	if err != nil {
+		return err
+	}
+	if bindings == nil {
+		bindings = WorkspaceBindings{}
+	}
+	data, err := json.MarshalIndent(bindings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// BindWorkspace remembers which Salad chat belongs to this local folder (for `salad` continue).
+func BindWorkspace(workspaceRoot, chatID, title string) error {
+	root := filepath.Clean(workspaceRoot)
+	if root == "" || chatID == "" {
+		return errors.New("workspace root and chat id required")
+	}
+	bindings, err := LoadWorkspaceBindings()
+	if err != nil {
+		return err
+	}
+	bindings[root] = WorkspaceBinding{ChatID: chatID, Title: title}
+	if err := SaveWorkspaceBindings(bindings); err != nil {
+		return err
+	}
+	return SaveActiveChat(&ActiveChat{ChatID: chatID, Title: title})
+}
+
+func WorkspaceChatID(workspaceRoot string) (string, string, error) {
+	root := filepath.Clean(workspaceRoot)
+	bindings, err := LoadWorkspaceBindings()
+	if err != nil {
+		return "", "", err
+	}
+	if b, ok := bindings[root]; ok && b.ChatID != "" {
+		return b.ChatID, b.Title, nil
+	}
+	return "", "", errors.New("no workspace chat")
 }

@@ -21,6 +21,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
+		// Continue last workspace chat when known; otherwise resume picker.
 		return tui.Run("")
 	}
 	cmd := args[0]
@@ -29,6 +30,10 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
+	case "--resume", "-r":
+		return tui.RunResume()
+	case "new":
+		return tui.RunNew()
 	case "login":
 		baseURL := config.BaseURL()
 		for i := 0; i < len(rest); i++ {
@@ -70,7 +75,7 @@ func run(args []string) error {
 			return chat.List()
 		}
 		if rest[0] == "pick" || rest[0] == "open" {
-			return tui.Run("")
+			return tui.RunResume()
 		}
 		if rest[0] == "participants" {
 			id := ""
@@ -93,7 +98,7 @@ func run(args []string) error {
 			}
 		}
 		if chatID == "" {
-			return tui.Run("")
+			return tui.RunResume()
 		}
 		if err := chat.Resume(chatID); err != nil {
 			return err
@@ -194,17 +199,19 @@ func runWorkspace(args []string) error {
 func printUsage() {
 	fmt.Print(`∬alad Terminal — same Salad, in your repo
 
-  salad                 Open Salad (login → chats → collaborate)
+  salad                 Continue last chat for this folder (or open resume picker)
+  salad --resume        Pick a Salad chat (↑↓ · enter · n new · 1-9)
+  salad new             Create a new Salad chat (syncs to web) and open it
   salad resume <id>     Jump straight into a chat
   salad login           Email/password sign-in
-  salad login --google  Browser Google OAuth (PKCE loopback)
+  salad login --google  Browser Google OAuth
   salad logout | whoami
   salad chat            List chats (headless)
   salad say <message>   Quick send to active chat
   salad workspace …     Local trust / read / git / permissions
 
-In the TUI: @ mention · /git /diff /read <path> · ctrl+t toggle tools
-Same account and chats as Salad web. Local tools only on terminal turns.
+In a chat: @ mention · /git /read · /new · /resume · esc = picker · ctrl+c quit
+New chats are real Salad chats — they show up on the web app too.
 Default API: staging (https://api-staging.salad.ink)
 `)
 }

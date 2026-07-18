@@ -42,9 +42,10 @@ func Footer() lipgloss.Style {
 }
 
 func Selected() lipgloss.Style {
+	// High-contrast so the active row is obvious even without truecolor.
 	return lipgloss.NewStyle().
-		Foreground(Ink).
-		Background(lipgloss.Color("#ececea")).
+		Foreground(Cream).
+		Background(Ink).
 		Bold(true).
 		Padding(0, 1)
 }

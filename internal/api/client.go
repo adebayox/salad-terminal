@@ -74,6 +74,7 @@ type ChatMessage struct {
 	Role       string    `json:"role"`
 	AuthorName string    `json:"authorName"`
 	Body       string    `json:"body"`
+	Status     string    `json:"status,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	SenderID   string    `json:"senderId,omitempty"`
 }
@@ -224,6 +225,7 @@ func normalizeMessage(raw map[string]any) ChatMessage {
 			stringField(sender, "name"),
 		),
 		Body:     firstNonEmpty(stringField(raw, "body"), stringField(raw, "content")),
+		Status:   firstNonEmpty(stringField(raw, "status"), stringField(raw, "message_status")),
 		SenderID: firstNonEmpty(stringField(raw, "senderId"), stringField(raw, "sender_id")),
 	}
 	if ts := firstNonEmpty(stringField(raw, "createdAt"), stringField(raw, "created_at")); ts != "" {
@@ -413,4 +415,43 @@ func (c *Client) ListMembers(ctx context.Context, chatID string) ([]map[string]a
 		return nil, err
 	}
 	return out, nil
+}
+
+// CreateChat creates a normal Salad chat (same POST /api/chats as the web app).
+// New chats appear in Salad web immediately.
+func (c *Client) CreateChat(ctx context.Context, name string, aiProductSlugs []string) (*ChatPreview, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "Terminal"
+	}
+	if len(name) > 100 {
+		name = name[:100]
+	}
+	if len(aiProductSlugs) == 0 {
+		aiProductSlugs = []string{"gpt-5-4"}
+	}
+	payload, err := c.do(ctx, http.MethodPost, "/api/chats", map[string]any{
+		"name":             name,
+		"name_source":      "salad_terminal",
+		"ai_product_slugs": aiProductSlugs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return nil, err
+	}
+	id := firstNonEmpty(stringField(raw, "id"), stringField(raw, "_id"))
+	if id == "" {
+		if nested, ok := raw["chat"].(map[string]any); ok {
+			id = firstNonEmpty(stringField(nested, "id"), stringField(nested, "_id"))
+			raw = nested
+		}
+	}
+	if id == "" {
+		return nil, fmt.Errorf("create chat: missing id in response")
+	}
+	title := firstNonEmpty(stringField(raw, "name"), stringField(raw, "title"), name)
+	return &ChatPreview{ID: id, Title: title}, nil
 }

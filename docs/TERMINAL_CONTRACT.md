@@ -5,10 +5,21 @@ identity, chats, participants, routing, and transcript semantics as the web app.
 
 ## Product shape
 
+Session UX follows the same patterns as Claude Code / Codex CLI:
+
+| Action | Behavior |
+|---|---|
+| `salad` | Continue the last Salad chat bound to this workspace (else resume picker) |
+| `salad --resume` | Explicit picker: ↑↓ + Enter to open, `n` / first row = new chat, `1-9` jump |
+| `salad new` / picker `n` | `POST /api/chats` — a real Salad chat that appears on web |
+| In-room `/resume`, `esc` | Back to picker |
+| In-room `/new` | Create another Salad chat and switch into it |
+
 - `cd <repo> && salad` authenticates as a normal Salad user (email/password or
   browser OAuth via the same mobile auth endpoints).
-- Resume or choose an existing Salad chat; send messages and see participants
-  through the same persisted chat APIs the web app uses.
+- Chats are the same persisted Salad chats as the web app (not a parallel
+  terminal-only transcript). Workspace → chat binding is local only
+  (`workspace_chats.json`); the server stays chat-centric.
 - Local workspace tools (read, git, diff, permissions) run only on
   **terminal-initiated** turns. Other surfaces must never execute commands on
   the developer's machine.
@@ -23,6 +34,7 @@ Reuse existing SaladBE surfaces — do not invent a parallel identity:
 |---|---|
 | Login / refresh / logout / me | `POST/GET /api/mobile/auth/*` |
 | Chat list / bootstrap | `GET /api/mobile/bootstrap`, `GET /api/mobile/chats/:id/bootstrap` |
+| Create chat | `POST /api/chats` (same as web; `ai_product_slugs`) |
 | Send / list messages | `/api/chats/:id/messages` |
 | Members / routing context | Existing chat membership APIs |
 

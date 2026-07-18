@@ -1,27 +1,33 @@
 # ∬alad Terminal
 
-Same Salad chats, in your terminal. Staging API is already the default — no env vars.
+Same Salad chats, in your terminal.
 
-## Install (once)
+## Install
 
 ```bash
-cd /Users/davidnifemi/code/salad-terminal
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash
 ```
 
-If `~/.local/bin` isn’t on your PATH, the script tells you the one line to add.
+Needs Go + git once. Puts `salad` on your PATH.
 
-## Use
+Then:
 
 ```bash
 salad login
 salad
 ```
 
-That’s it.
+## Use
 
-- Email/password, or `salad login --google`
-- Pick a chat → talk to the same AIs as the web app
-- `@` to mention · `/git` `/read` · `esc` back · `ctrl+c` quit
+| Command | What it does |
+|---|---|
+| `salad` | Continue last chat for this folder (or open picker) |
+| `salad --resume` | Pick a chat |
+| `salad new` | New Salad chat (shows on web too) |
 
-QA account (staging): `codex-live-qa@test.local` / `TestPass@123`
+Picker: `↑↓` move · `enter` open · `n` new · `1–9` jump · `q` quit  
+
+In a chat: `@` mention · `/new` · `/resume` · `esc` picker · `q` quit  
+Local tools off by default — `/git` `/read` or `ctrl+t` to attach.
+
+Default API: staging (`https://api-staging.salad.ink`)

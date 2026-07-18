@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +22,15 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/theme"
 	"github.com/salad-ai/salad-terminal/internal/workspace"
 )
+
+// Options controls how Salad Terminal starts a session.
+// Default (empty): continue the last chat for this workspace when known;
+// otherwise show a resume picker (Claude Code / Codex style).
+type Options struct {
+	ChatID      string
+	ForceResume bool // always show the picker
+	ForceNew    bool // create a new Salad chat and open it
+}
 
 type screen int
 
@@ -52,9 +63,13 @@ type model struct {
 	loginPass  string
 	loginFocus int
 
-	chats    []api.ChatPreview
-	chatIdx  int
-	chatLoad bool
+	chats       []api.ChatPreview
+	chatIdx     int  // picker: 0 = New chat, 1.. = chats[i-1]
+	chatLoad    bool
+	chatCreating bool
+	forceResume bool
+	forceNew    bool
+	pickerInited bool
 
 	chatID       string
 	chatTitle    string
@@ -110,21 +125,37 @@ type (
 	loginDoneMsg struct {
 		err error
 	}
+	createdChatMsg struct {
+		chat *api.ChatPreview
+		err  error
+	}
 )
 
 func Run(initialChatID string) error {
-	m := newModel(initialChatID)
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	if m.wsClient != nil {
+	return RunOptions(Options{ChatID: initialChatID})
+}
+
+func RunOptions(opts Options) error {
+	m := newModel(opts)
+	programOpts := []tea.ProgramOption{}
+	// SALAD_SIMPLE=1 keeps output in the normal screen buffer so Cursor/agent
+	// terminals can display the session (alt-screen needs a real interactive TTY).
+	if os.Getenv("SALAD_SIMPLE") == "" {
+		programOpts = append(programOpts, tea.WithAltScreen())
+	}
+	p := tea.NewProgram(m, programOpts...)
+	finalModel, err := p.Run()
+	if fm, ok := finalModel.(model); ok && fm.wsClient != nil {
+		fm.wsClient.Close()
+	} else if m.wsClient != nil {
 		m.wsClient.Close()
 	}
 	return err
 }
 
-func newModel(initialChatID string) model {
+func newModel(opts Options) model {
 	ta := textarea.New()
-	ta.Placeholder = "Message…  @ to mention · /git /read · enter send"
+	ta.Placeholder = "Message…  @ to mention · /git /read · /new · enter send"
 	ta.ShowLineNumbers = false
 	ta.Prompt = "∬ "
 	ta.CharLimit = 8000
@@ -137,10 +168,13 @@ func newModel(initialChatID string) model {
 		status:       "Opening Salad…",
 		composer:     ta,
 		viewport:     viewport.New(80, 20),
-		chatID:       initialChatID,
+		chatID:       strings.TrimSpace(opts.ChatID),
+		forceResume:  opts.ForceResume,
+		forceNew:     opts.ForceNew,
 		workspaceDir: root,
 		workspaceOK:  workspace.IsTrusted(root),
-		attachTools:  true,
+		// Opt-in: /git /read /diff or ctrl+t. Avoid shipping git dumps on every send.
+		attachTools: false,
 	}
 }
 
@@ -185,6 +219,81 @@ func openRoomCmd(client *api.Client, chatID string) tea.Cmd {
 		_ = config.SaveActiveChat(&config.ActiveChat{ChatID: chatID, Title: title})
 		return roomMsg{title: title, messages: messages, members: members}
 	}
+}
+
+func createChatCmd(client *api.Client, workspaceDir string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		chat, err := client.CreateChat(ctx, defaultTerminalChatName(workspaceDir), []string{"gpt-5-4"})
+		return createdChatMsg{chat: chat, err: err}
+	}
+}
+
+func defaultTerminalChatName(workspaceDir string) string {
+	base := filepath.Base(filepath.Clean(workspaceDir))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		base = "Terminal"
+	}
+	name := base + " · Terminal"
+	if len(name) > 100 {
+		name = name[:100]
+	}
+	return name
+}
+
+func resolveContinueChat(workspaceDir string) (chatID, title string) {
+	if id, t, err := config.WorkspaceChatID(workspaceDir); err == nil && id != "" {
+		return id, t
+	}
+	if active, err := config.LoadActiveChat(); err == nil && active.ChatID != "" {
+		return active.ChatID, active.Title
+	}
+	return "", ""
+}
+
+func (m *model) openSelectedChat(id, title string) tea.Cmd {
+	m.chatID = id
+	m.chatTitle = title
+	m.screen = screenRoom
+	m.status = "Opening…"
+	m.err = ""
+	m.composer.SetValue("")
+	m.composer.Focus()
+	_ = config.BindWorkspace(m.workspaceDir, id, title)
+	return openRoomCmd(m.client, id)
+}
+
+func (m *model) showResumePicker(status string) tea.Cmd {
+	m.screen = screenChats
+	m.status = status
+	m.chatLoad = true
+	m.pickerInited = false
+	m.chatIdx = 0
+	return loadChatsCmd(m.client)
+}
+
+func (m *model) afterAuth() tea.Cmd {
+	wsCmd := wsListenCmd(config.BaseURL(), m.creds.AccessToken)
+	if m.forceNew {
+		m.screen = screenChats
+		m.chatCreating = true
+		m.status = "Creating a new Salad chat…"
+		return tea.Batch(createChatCmd(m.client, m.workspaceDir), wsCmd)
+	}
+	if m.chatID == "" && !m.forceResume {
+		if id, title := resolveContinueChat(m.workspaceDir); id != "" {
+			m.chatID = id
+			m.chatTitle = title
+		}
+	}
+	if m.chatID != "" && !m.forceResume {
+		m.screen = screenRoom
+		m.status = "Continuing last chat…"
+		_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
+		return tea.Batch(openRoomCmd(m.client, m.chatID), wsCmd)
+	}
+	return tea.Batch(m.showResumePicker("↑↓ to move · enter to open · n new chat"), wsCmd)
 }
 
 func loadMembers(ctx context.Context, client *api.Client, chatID string, boot *api.ChatBootstrapResponse) []member {
@@ -289,15 +398,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.client = msg.client
 		m.creds = msg.creds
-		if m.chatID != "" {
-			m.screen = screenRoom
-			m.status = "Loading chat…"
-			return m, tea.Batch(openRoomCmd(m.client, m.chatID), wsListenCmd(config.BaseURL(), m.creds.AccessToken))
-		}
-		m.screen = screenChats
-		m.status = "Your Salad chats"
-		m.chatLoad = true
-		return m, tea.Batch(loadChatsCmd(m.client), wsListenCmd(config.BaseURL(), m.creds.AccessToken))
+		return m, m.afterAuth()
 
 	case loginDoneMsg:
 		if msg.err != nil {
@@ -312,11 +413,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.client = client
 		m.creds = creds
-		m.screen = screenChats
 		m.err = ""
-		m.status = "Your Salad chats"
-		m.chatLoad = true
-		return m, tea.Batch(loadChatsCmd(m.client), wsListenCmd(config.BaseURL(), m.creds.AccessToken))
+		return m, m.afterAuth()
 
 	case chatsMsg:
 		m.chatLoad = false
@@ -326,23 +424,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.chats = msg.chats
 		m.err = ""
-		if m.chatIdx >= len(m.chats) {
-			m.chatIdx = 0
+		maxIdx := len(m.chats) // 0 = New, 1..len = chats
+		if !m.pickerInited {
+			m.pickerInited = true
+			if len(m.chats) > 0 {
+				m.chatIdx = 1 // highlight most recent resume target
+			} else {
+				m.chatIdx = 0
+			}
 		}
-		m.status = fmt.Sprintf("%d chats · think together", len(m.chats))
+		if m.chatIdx > maxIdx {
+			m.chatIdx = maxIdx
+		}
+		if len(m.chats) == 0 {
+			m.status = "No chats yet — press enter or n to create one on Salad"
+		} else {
+			m.status = fmt.Sprintf("%d Salad chats · same list as web", len(m.chats))
+		}
 		return m, nil
+
+	case createdChatMsg:
+		m.chatCreating = false
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			m.status = "Could not create chat"
+			m.screen = screenChats
+			m.chatLoad = true
+			return m, loadChatsCmd(m.client)
+		}
+		title := firstNonEmpty(msg.chat.Title, "Terminal")
+		return m, m.openSelectedChat(msg.chat.ID, title)
 
 	case roomMsg:
 		if msg.err != nil {
 			m.err = msg.err.Error()
-			m.screen = screenChats
-			return m, loadChatsCmd(m.client)
+			m.forceResume = true
+			return m, m.showResumePicker("Could not open chat — pick another")
 		}
 		m.chatTitle = msg.title
 		m.messages = msg.messages
 		m.members = msg.members
 		m.err = ""
 		m.status = "Live · same thread as Salad web"
+		_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
 		m.composer.Focus()
 		m.refreshViewport()
 		m.viewport.GotoBottom()
@@ -356,14 +480,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wsClient = msg.client
 		m.wsEvents = msg.ch
 		m.live = "ws"
-		m.status = "Live · websocket"
+		// Never clobber picker / login copy with transport status.
+		if m.screen == screenRoom {
+			m.status = "Live · websocket"
+		}
 		return m, nextWSCmd(m.wsEvents)
 
 	case wsReadyMsg:
 		if !msg.ok {
 			m.live = "poll"
 			m.wsEvents = nil
-			if msg.err != nil {
+			if msg.err != nil && m.screen == screenRoom {
 				m.status = "Live · polling (ws unavailable)"
 			}
 			return m, nil
@@ -497,32 +624,53 @@ func (m model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateChats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.chatCreating {
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	maxIdx := len(m.chats) // 0 = New
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "r":
 		m.chatLoad = true
+		m.pickerInited = false
 		return m, loadChatsCmd(m.client)
+	case "n":
+		m.chatCreating = true
+		m.status = "Creating a new Salad chat…"
+		m.err = ""
+		return m, createChatCmd(m.client, m.workspaceDir)
 	case "up", "k":
 		if m.chatIdx > 0 {
 			m.chatIdx--
 		}
 	case "down", "j":
-		if m.chatIdx < len(m.chats)-1 {
+		if m.chatIdx < maxIdx {
 			m.chatIdx++
 		}
 	case "enter":
-		if len(m.chats) == 0 {
+		if m.chatIdx == 0 {
+			m.chatCreating = true
+			m.status = "Creating a new Salad chat…"
+			m.err = ""
+			return m, createChatCmd(m.client, m.workspaceDir)
+		}
+		if m.chatIdx-1 >= len(m.chats) {
 			return m, nil
 		}
-		selected := m.chats[m.chatIdx]
-		m.chatID = selected.ID
-		m.chatTitle = selected.Title
-		m.screen = screenRoom
-		m.status = "Opening…"
-		m.composer.SetValue("")
-		m.composer.Focus()
-		return m, openRoomCmd(m.client, m.chatID)
+		selected := m.chats[m.chatIdx-1]
+		return m, m.openSelectedChat(selected.ID, firstNonEmpty(selected.Title, "Untitled"))
+	default:
+		// 1-9 jump into existing chats and open (numbered menu pattern)
+		if n, err := strconv.Atoi(msg.String()); err == nil && n >= 1 && n <= 9 && n <= len(m.chats) {
+			selected := m.chats[n-1]
+			m.chatIdx = n
+			return m, m.openSelectedChat(selected.ID, firstNonEmpty(selected.Title, "Untitled"))
+		}
 	}
 	return m, nil
 }
@@ -538,12 +686,18 @@ func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.wsClient.Close()
 		}
 		return m, tea.Quit
+	case "q":
+		// Quit only when composer is empty — otherwise type "q".
+		if strings.TrimSpace(m.composer.Value()) == "" {
+			if m.wsClient != nil {
+				m.wsClient.Close()
+			}
+			return m, tea.Quit
+		}
 	case "esc":
-		m.screen = screenChats
-		m.status = "Your Salad chats"
 		m.composer.Blur()
-		m.chatLoad = true
-		return m, loadChatsCmd(m.client)
+		m.forceResume = true
+		return m, m.showResumePicker("Resume another Salad chat · n new · enter open")
 	case "ctrl+p":
 		m.status = participantsLine(m.members)
 		return m, nil
@@ -728,14 +882,23 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 	case "tools":
 		m.attachTools = !m.attachTools
 		m.status = fmt.Sprintf("attachTools=%v", m.attachTools)
+	case "new":
+		m.chatCreating = true
+		m.status = "Creating a new Salad chat…"
+		m.err = ""
+		return m, createChatCmd(m.client, m.workspaceDir)
+	case "resume", "chats":
+		m.composer.Blur()
+		m.forceResume = true
+		return m, m.showResumePicker("Resume another Salad chat · n new · enter open")
 	default:
-		m.err = "commands: /git /diff /read <path> /trust /tools"
+		m.err = "commands: /git /diff /read <path> /trust /tools /new /resume"
 	}
 	return m, nil
 }
 
 func (m model) sendComposer() (tea.Model, tea.Cmd) {
-	if m.sending || m.client == nil || m.chatID == "" || m.chatTitle == "" {
+	if m.sending || m.client == nil || m.chatID == "" {
 		return m, nil
 	}
 	content := strings.TrimSpace(m.composer.Value())
@@ -782,18 +945,34 @@ func parseMentions(content string, members []member) ([]api.ExplicitMention, []s
 	var slugs []string
 	var names []string
 	var ids []string
+	lowerContent := strings.ToLower(content)
+	seen := map[string]bool{}
 	for _, mem := range members {
 		slug := firstNonEmpty(mem.Slug, slugify(mem.DisplayName))
-		token := "@" + slug
-		idx := strings.Index(strings.ToLower(content), strings.ToLower(token))
-		if idx < 0 {
+		matchedToken := ""
+		matchedIdx := -1
+		for _, alias := range mentionAliases(mem) {
+			token := "@" + alias
+			idx := strings.Index(lowerContent, strings.ToLower(token))
+			if idx < 0 {
+				continue
+			}
+			// Prefer earlier index; at the same index prefer the longest alias.
+			prevAliasLen := len(strings.TrimPrefix(matchedToken, "@"))
+			if matchedIdx < 0 || idx < matchedIdx || (idx == matchedIdx && len(alias) > prevAliasLen) {
+				matchedToken = token
+				matchedIdx = idx
+			}
+		}
+		if matchedIdx < 0 || seen[mem.ID] {
 			continue
 		}
+		seen[mem.ID] = true
 		mentions = append(mentions, api.ExplicitMention{
 			MemberID: mem.ID,
-			Token:    token,
-			Start:    idx,
-			End:      idx + len(token),
+			Token:    matchedToken,
+			Start:    matchedIdx,
+			End:      matchedIdx + len(matchedToken),
 		})
 		if mem.ID != "" {
 			tagged = append(tagged, mem.ID)
@@ -802,7 +981,7 @@ func parseMentions(content string, members []member) ([]api.ExplicitMention, []s
 		slugs = append(slugs, slug)
 		names = append(names, mem.DisplayName)
 	}
-	if strings.Contains(strings.ToLower(content), "@everyone") {
+	if strings.Contains(lowerContent, "@everyone") {
 		tagged = append(tagged, "@everyone")
 	}
 	if len(mentions) == 0 && len(tagged) == 0 {
@@ -815,6 +994,41 @@ func parseMentions(content string, members []member) ([]api.ExplicitMention, []s
 		Source:       "salad_terminal",
 	}
 	return mentions, tagged, hint
+}
+
+func mentionAliases(mem member) []string {
+	slug := strings.TrimSpace(firstNonEmpty(mem.Slug, slugify(mem.DisplayName)))
+	if slug == "" {
+		return nil
+	}
+	out := []string{slug}
+	lower := strings.ToLower(slug + " " + mem.DisplayName)
+	add := func(alias string) {
+		alias = strings.TrimSpace(strings.ToLower(alias))
+		if alias == "" || alias == strings.ToLower(slug) {
+			return
+		}
+		for _, existing := range out {
+			if strings.EqualFold(existing, alias) {
+				return
+			}
+		}
+		out = append(out, alias)
+	}
+	switch {
+	case strings.Contains(lower, "gpt") || strings.Contains(lower, "chatgpt"):
+		add("gpt")
+		add("chatgpt")
+	case strings.Contains(lower, "claude"):
+		add("claude")
+	case strings.Contains(lower, "gemini"):
+		add("gemini")
+	case strings.Contains(lower, "grok"):
+		add("grok")
+	case strings.Contains(lower, "mistral"):
+		add("mistral")
+	}
+	return out
 }
 
 func (m *model) layout() {
@@ -855,7 +1069,16 @@ func (m model) renderTranscript() string {
 		author := firstNonEmpty(msg.AuthorName, msg.Role, "member")
 		body := strings.TrimSpace(msg.Body)
 		if body == "" {
-			body = "…"
+			switch strings.ToLower(msg.Status) {
+			case "processing", "streaming", "queued", "pending":
+				body = "thinking…"
+			default:
+				if isAssistant(msg) {
+					body = "thinking…"
+				} else {
+					body = "…"
+				}
+			}
 		}
 		wrapped := wordwrap.String(body, width-6)
 		if strings.EqualFold(msg.Role, "system") || author == "local" {
@@ -924,37 +1147,81 @@ func (m model) viewChats() string {
 	}
 	live := m.live
 	if live == "" {
-		live = "connecting"
+		live = "…"
 	}
-	title := theme.Header().Width(w).Render(fmt.Sprintf("∬alad  ·  %s  ·  %s", firstNonEmpty(who, "you"), live))
+	title := theme.Header().Width(w).Render(fmt.Sprintf("∬alad  ·  Resume  ·  %s  ·  %s", firstNonEmpty(who, "you"), live))
+	hint := theme.MutedText().Render("Same chats as web. ▸ = selected. Press enter to open.")
 	sub := theme.MutedText().Render(m.status)
+	cwd := theme.MutedText().Render("folder  " + m.workspaceDir)
+
 	var list strings.Builder
-	if m.chatLoad {
+	if m.chatCreating {
+		list.WriteString(theme.MutedText().Render("Creating Salad chat (shows up on web)…"))
+	} else if m.chatLoad {
 		list.WriteString(theme.MutedText().Render("Loading chats…"))
-	} else if len(m.chats) == 0 {
-		list.WriteString(theme.MutedText().Render("No chats yet."))
 	} else {
-		limit := min(len(m.chats), max(8, m.height-8))
-		start := 0
-		if m.chatIdx >= limit {
-			start = m.chatIdx - limit + 1
+		marker := "  "
+		if m.chatIdx == 0 {
+			marker = "▸ "
 		}
-		end := min(len(m.chats), start+limit)
-		for i := start; i < end; i++ {
-			chat := m.chats[i]
-			unread := " "
-			if chat.UnreadCount > 0 {
-				unread = theme.UnreadDot().Render("•")
+		newRow := marker + "+ New Salad chat\n    Creates on web · GPT-5.4 · syncs to salad.ink"
+		if m.chatIdx == 0 {
+			list.WriteString(theme.Selected().Width(w-2).Render(newRow) + "\n")
+		} else {
+			list.WriteString(theme.ListItem().Width(w-2).Render(newRow) + "\n")
+		}
+
+		if len(m.chats) == 0 {
+			list.WriteString("\n" + theme.MutedText().Render("No existing chats — press enter (or n) to create one."))
+		} else {
+			// Compact picker: never dump the whole inbox into the terminal.
+			const maxVisible = 8
+			start := 0
+			if m.chatIdx > 0 {
+				chatSel := m.chatIdx - 1
+				if chatSel >= maxVisible {
+					start = chatSel - maxVisible + 1
+				}
 			}
-			members := strings.Join(chat.MemberNames, ", ")
-			if members == "" {
-				members = "Salad chat"
+			end := min(len(m.chats), start+maxVisible)
+			for i := start; i < end; i++ {
+				chat := m.chats[i]
+				pickerIdx := i + 1
+				marker := "  "
+				if pickerIdx == m.chatIdx {
+					marker = "▸ "
+				}
+				num := "  "
+				if i < 9 {
+					num = strconv.Itoa(i+1) + "."
+				}
+				unread := ""
+				if chat.UnreadCount > 0 {
+					unread = " •"
+				}
+				members := strings.Join(chat.MemberNames, ", ")
+				if members == "" {
+					members = "Salad chat"
+				}
+				if len(members) > 48 {
+					members = members[:45] + "…"
+				}
+				titleText := firstNonEmpty(chat.Title, "Untitled")
+				if len(titleText) > 52 {
+					titleText = titleText[:49] + "…"
+				}
+				row := fmt.Sprintf("%s%s %s%s\n    %s", marker, num, titleText, unread, theme.MutedText().Render(members))
+				if pickerIdx == m.chatIdx {
+					list.WriteString(theme.Selected().Width(w-2).Render(row) + "\n")
+				} else {
+					list.WriteString(theme.ListItem().Width(w-2).Render(row) + "\n")
+				}
 			}
-			row := fmt.Sprintf("%s %s\n  %s", unread, firstNonEmpty(chat.Title, "Untitled"), theme.MutedText().Render(members))
-			if i == m.chatIdx {
-				list.WriteString(theme.Selected().Width(w-2).Render(row) + "\n")
-			} else {
-				list.WriteString(theme.ListItem().Width(w-2).Render(row) + "\n")
+			if end < len(m.chats) {
+				list.WriteString(theme.MutedText().Render(fmt.Sprintf("  … %d more below — ↓ to scroll", len(m.chats)-end)) + "\n")
+			}
+			if start > 0 {
+				list.WriteString(theme.MutedText().Render(fmt.Sprintf("  … %d above — ↑ to scroll", start)) + "\n")
 			}
 		}
 	}
@@ -962,8 +1229,8 @@ func (m model) viewChats() string {
 	if m.err != "" {
 		errLine = theme.Error().Render(m.err) + "\n"
 	}
-	help := theme.Footer().Width(w).Render("↑↓ navigate · enter open · r refresh · q quit")
-	return lipgloss.JoinVertical(lipgloss.Left, title, sub, "", errLine+list.String(), help)
+	help := theme.Footer().Width(w).Render("↑↓ move · enter open · n new · 1-9 jump · r refresh · q quit")
+	return lipgloss.JoinVertical(lipgloss.Left, title, hint, cwd, sub, "", errLine+list.String(), help)
 }
 
 func (m model) viewRoom() string {
@@ -995,7 +1262,7 @@ func (m model) viewRoom() string {
 	if m.err != "" {
 		status = m.err
 	}
-	footer := theme.Footer().Width(w).Render(fmt.Sprintf("%s  ·  %s  ·  %s  ·  enter send · @ mention · /read · ctrl+t tools · esc chats", status, trust, tools))
+	footer := theme.Footer().Width(w).Render(fmt.Sprintf("%s  ·  %s  ·  %s  ·  enter send · @ · /new · /resume · esc picker · q quit", status, trust, tools))
 	return lipgloss.JoinVertical(lipgloss.Left, header, people, body, mention, composer, footer)
 }
 
