@@ -247,7 +247,7 @@ func runWorkspace(args []string) error {
 		if _, err := workspace.EnsureTrusted(""); err != nil {
 			return err
 		}
-		out, err := workspace.GitDiff("")
+		out, err := workspace.GitDiff("", "", true)
 		if err != nil {
 			return err
 		}

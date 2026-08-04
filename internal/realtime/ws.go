@@ -168,3 +168,7 @@ func IsChatSignal(evt Event) bool {
 		return false
 	}
 }
+
+func IsToolRequest(evt Event) bool {
+	return strings.EqualFold(strings.TrimSpace(evt.Type), "tool_request")
+}

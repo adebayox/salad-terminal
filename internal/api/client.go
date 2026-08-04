@@ -104,13 +104,15 @@ type OpenFileContent struct {
 }
 
 type CodeContext struct {
-	SelectedCode     string            `json:"selected_code,omitempty"`
-	SelectedFile     string            `json:"selected_file,omitempty"`
-	Language         string            `json:"language,omitempty"`
-	OpenFiles        []string          `json:"open_files,omitempty"`
-	OpenFilesContent []OpenFileContent `json:"open_files_content,omitempty"`
-	Diagnostics      []string          `json:"diagnostics,omitempty"`
-	WorkspaceRoot    string            `json:"workspace_root,omitempty"`
+	SelectedCode        string            `json:"selected_code,omitempty"`
+	SelectedFile        string            `json:"selected_file,omitempty"`
+	Language            string            `json:"language,omitempty"`
+	OpenFiles           []string          `json:"open_files,omitempty"`
+	OpenFilesContent    []OpenFileContent `json:"open_files_content,omitempty"`
+	Diagnostics         []string          `json:"diagnostics,omitempty"`
+	WorkspaceRoot       string            `json:"workspace_root,omitempty"`
+	WorkspaceID         string            `json:"workspace_id,omitempty"`
+	ProjectInstructions string            `json:"project_instructions,omitempty"`
 }
 
 type SendMessageRequest struct {
@@ -215,9 +217,9 @@ func errorText(values ...string) string {
 func normalizeMessage(raw map[string]any) ChatMessage {
 	sender, _ := raw["sender"].(map[string]any)
 	msg := ChatMessage{
-		ID:         stringField(raw, "id"),
-		ChatID:     firstNonEmpty(stringField(raw, "chatId"), stringField(raw, "chat_id")),
-		Role:       firstNonEmpty(stringField(raw, "role"), stringField(raw, "message_type"), stringField(raw, "sender_type")),
+		ID:     stringField(raw, "id"),
+		ChatID: firstNonEmpty(stringField(raw, "chatId"), stringField(raw, "chat_id")),
+		Role:   firstNonEmpty(stringField(raw, "role"), stringField(raw, "message_type"), stringField(raw, "sender_type")),
 		AuthorName: firstNonEmpty(
 			stringField(raw, "authorName"),
 			stringField(raw, "sender_name"),
@@ -291,7 +293,7 @@ func (c *Client) LoginGoogle(ctx context.Context, code, codeVerifier, redirectUR
 		"code":          code,
 		"code_verifier": codeVerifier,
 		"redirect_uri":  redirectURI,
-		"device_info":    device,
+		"device_info":   device,
 	}, &out)
 	return &out, err
 }
@@ -300,7 +302,7 @@ func (c *Client) Refresh(ctx context.Context, refreshToken string, device Device
 	var out AuthResponse
 	err := c.doJSON(ctx, http.MethodPost, "/api/mobile/auth/refresh", map[string]any{
 		"refresh_token": refreshToken,
-		"device_info":    device,
+		"device_info":   device,
 	}, &out)
 	return &out, err
 }
@@ -403,6 +405,21 @@ func (c *Client) SendMessageRequest(ctx context.Context, chatID string, req Send
 	}
 	msg := normalizeMessage(raw)
 	return &msg, nil
+}
+
+type ToolResultRequest struct {
+	RequestID  string `json:"request_id"`
+	ToolCallID string `json:"tool_call_id"`
+	Result     string `json:"result,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+func (c *Client) PostToolResult(ctx context.Context, req ToolResultRequest) error {
+	if strings.TrimSpace(req.RequestID) == "" || strings.TrimSpace(req.ToolCallID) == "" {
+		return fmt.Errorf("request_id and tool_call_id required")
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/tools/result", req)
+	return err
 }
 
 func (c *Client) ListMembers(ctx context.Context, chatID string) ([]map[string]any, error) {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/config"
 	"github.com/salad-ai/salad-terminal/internal/realtime"
 	"github.com/salad-ai/salad-terminal/internal/theme"
+	"github.com/salad-ai/salad-terminal/internal/tools"
 	"github.com/salad-ai/salad-terminal/internal/workspace"
 )
 
@@ -42,6 +44,7 @@ const (
 	screenChats
 	screenNewAI
 	screenRoom
+	screenApprove
 )
 
 type member struct {
@@ -67,10 +70,10 @@ type model struct {
 	loginPass  string
 	loginFocus int
 
-	chats        []api.ChatPreview
-	chatIdx      int // picker: 0 = New chat, 1.. = chats[i-1]
-	chatLoad     bool
-	chatCreating bool
+	chats         []api.ChatPreview
+	chatIdx       int // picker: 0 = New chat, 1.. = chats[i-1]
+	chatLoad      bool
+	chatCreating  bool
 	forceResume   bool
 	forceContinue bool
 	forceNew      bool
@@ -101,6 +104,14 @@ type model struct {
 	mentionOpen bool
 	mentionIdx  int
 	mentionQ    string
+
+	toolQueue        []tools.Request
+	pendingTool      *tools.Request
+	pendingKind      string // "edit" | "command"
+	pendingPreview   string
+	pendingReason    string
+	autoApproveEdits bool
+	autoApproveCmds  map[string]bool
 }
 
 type (
@@ -186,16 +197,16 @@ func newModel(opts Options) model {
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	root, _ := workspace.ResolveRoot("")
 	return model{
-		screen:       screenBoot,
-		status:       "Opening Salad…",
-		composer:     ta,
-		viewport:     viewport.New(80, 20),
+		screen:        screenBoot,
+		status:        "Opening Salad…",
+		composer:      ta,
+		viewport:      viewport.New(80, 20),
 		chatID:        strings.TrimSpace(opts.ChatID),
 		forceResume:   opts.ForceResume,
 		forceContinue: opts.ForceContinue,
 		forceNew:      opts.ForceNew,
 		workspaceDir:  root,
-		workspaceOK:  workspace.IsTrusted(root),
+		workspaceOK:   workspace.IsTrusted(root),
 		// Opt-in: /git /read /diff or ctrl+t. Avoid shipping git dumps on every send.
 		attachTools: false,
 	}
@@ -696,6 +707,212 @@ func nextWSCmd(ch <-chan realtime.Event) tea.Cmd {
 	}
 }
 
+// executeToolCmd runs a tool (read-only, or an already-approved edit/command)
+// and posts the result back to the server.
+func executeToolCmd(client *api.Client, root string, req tools.Request) tea.Cmd {
+	return func() tea.Msg {
+		result, execErr := tools.Execute(root, req)
+		post := api.ToolResultRequest{
+			RequestID:  req.RequestID,
+			ToolCallID: req.ToolCallID,
+		}
+		if execErr != nil {
+			post.Error = execErr.Error()
+		} else {
+			post.Result = result
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := client.PostToolResult(ctx, post); err != nil {
+			return toolResultMsg{name: req.ToolName, err: err}
+		}
+		if execErr != nil {
+			return toolResultMsg{name: req.ToolName, err: execErr}
+		}
+		return toolResultMsg{name: req.ToolName, ok: true}
+	}
+}
+
+// postToolErrorCmd reports a rejected or un-runnable tool back to the server so
+// the AI loop can react instead of hanging on the request.
+func postToolErrorCmd(client *api.Client, req tools.Request, cause error) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		post := api.ToolResultRequest{
+			RequestID:  req.RequestID,
+			ToolCallID: req.ToolCallID,
+			Error:      cause.Error(),
+		}
+		if err := client.PostToolResult(ctx, post); err != nil {
+			return toolResultMsg{name: req.ToolName, err: err}
+		}
+		return toolResultMsg{name: req.ToolName, ok: true}
+	}
+}
+
+// enqueueToolRequest queues an incoming tool_request and starts draining.
+func (m model) enqueueToolRequest(req tools.Request, wsCmd tea.Cmd) (tea.Model, tea.Cmd) {
+	m.toolQueue = append(m.toolQueue, req)
+	next, drainCmds := m.drainToolQueue()
+	if len(drainCmds) == 0 {
+		return next, wsCmd
+	}
+	all := append([]tea.Cmd{wsCmd}, drainCmds...)
+	return next, tea.Batch(all...)
+}
+
+// drainToolQueue processes queued tool requests one at a time. Read-only and
+// auto-classified commands run immediately; edits and approval-classified
+// commands open the approval screen.
+func (m model) drainToolQueue() (model, []tea.Cmd) {
+	if m.client == nil || m.pendingTool != nil || len(m.toolQueue) == 0 {
+		return m, nil
+	}
+	req := m.toolQueue[0]
+	name := strings.TrimSpace(req.ToolName)
+
+	switch name {
+	case "apply_edit":
+		if m.autoApproveEdits {
+			m.toolQueue = m.toolQueue[1:]
+			return m, []tea.Cmd{executeToolCmd(m.client, m.workspaceDir, req)}
+		}
+		preview, err := tools.PreviewEdit(m.workspaceDir, req)
+		if err != nil {
+			m.toolQueue = m.toolQueue[1:]
+			return m, []tea.Cmd{postToolErrorCmd(m.client, req, err)}
+		}
+		m.pendingTool = &req
+		m.pendingKind = "edit"
+		m.pendingPreview = preview
+		m.pendingReason = "The AI wants to rewrite this file. Review the diff before applying."
+		m.screen = screenApprove
+		return m, nil
+
+	case "run_command":
+		command, _ := req.Arguments["command"].(string)
+		cwd, _ := req.Arguments["cwd"].(string)
+		argv, err := tools.ParseCommand(command)
+		if err != nil {
+			m.toolQueue = m.toolQueue[1:]
+			return m, []tea.Cmd{postToolErrorCmd(m.client, req, err)}
+		}
+		cls, reason := tools.Classify(argv)
+		if cls == tools.ClassificationDenied {
+			m.toolQueue = m.toolQueue[1:]
+			return m, []tea.Cmd{postToolErrorCmd(m.client, req, fmt.Errorf("command denied: %s", reason))}
+		}
+		if cls == tools.ClassificationAuto || m.autoApproveCmds[tools.Canonical(argv)] {
+			m.toolQueue = m.toolQueue[1:]
+			return m, []tea.Cmd{executeToolCmd(m.client, m.workspaceDir, req)}
+		}
+		m.pendingTool = &req
+		m.pendingKind = "command"
+		m.pendingPreview = strings.Join(argv, " ")
+		if strings.TrimSpace(cwd) != "" {
+			m.pendingPreview += "\n(cwd: " + strings.TrimSpace(cwd) + ")"
+		}
+		m.pendingReason = "Run this command in your workspace? " + reason
+		m.screen = screenApprove
+		return m, nil
+
+	default:
+		// Read-only investigator tools run without prompting.
+		m.toolQueue = m.toolQueue[1:]
+		return m, []tea.Cmd{executeToolCmd(m.client, m.workspaceDir, req)}
+	}
+}
+
+// approvePending approves the tool currently awaiting review and runs it.
+func (m model) approvePending(remember bool) (model, tea.Cmd) {
+	if m.pendingTool == nil {
+		return m, nil
+	}
+	req := *m.pendingTool
+	if remember {
+		if m.pendingKind == "edit" {
+			m.autoApproveEdits = true
+		}
+		if m.pendingKind == "command" {
+			if m.autoApproveCmds == nil {
+				m.autoApproveCmds = map[string]bool{}
+			}
+			if key := tools.CanonicalForRequest(req); key != "" {
+				m.autoApproveCmds[key] = true
+			}
+		}
+	}
+	m.pendingTool = nil
+	if len(m.toolQueue) > 0 {
+		m.toolQueue = m.toolQueue[1:]
+	}
+	m.screen = screenRoom
+	m.status = "Approved " + req.ToolName + " — running…"
+	return m, executeToolCmd(m.client, m.workspaceDir, req)
+}
+
+// rejectPending rejects the tool currently awaiting review.
+func (m model) rejectPending() (model, tea.Cmd) {
+	if m.pendingTool == nil {
+		return m, nil
+	}
+	req := *m.pendingTool
+	m.pendingTool = nil
+	if len(m.toolQueue) > 0 {
+		m.toolQueue = m.toolQueue[1:]
+	}
+	m.screen = screenRoom
+	m.status = "Rejected " + req.ToolName
+	return m, postToolErrorCmd(m.client, req, fmt.Errorf("user rejected %s", req.ToolName))
+}
+
+func (m model) updateApprove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y":
+		return m.approvePending(false)
+	case "a":
+		return m.approvePending(true)
+	case "n", "esc", "ctrl+c":
+		return m.rejectPending()
+	}
+	return m, nil
+}
+
+func (m model) viewApprove() string {
+	width := m.width
+	if width < 40 {
+		width = 40
+	}
+	var b strings.Builder
+	b.WriteString(theme.Header().Render(" Salad workspace approval ") + "\n\n")
+	if m.pendingKind == "edit" {
+		b.WriteString(theme.AIHeader("apply_edit").Render("● apply_edit — the AI wants to edit a file") + "\n\n")
+	} else {
+		b.WriteString(theme.AIHeader("run_command").Render("● run_command — the AI wants to run a command") + "\n\n")
+	}
+	if m.pendingReason != "" {
+		b.WriteString(theme.MutedText().Render(m.pendingReason) + "\n\n")
+	}
+	body := m.pendingPreview
+	if len(body) > 24*1024 {
+		body = body[:24*1024] + "\n… preview truncated …\n"
+	}
+	b.WriteString(theme.Selected().Width(min(width-4, 96)).Render(body) + "\n\n")
+	if m.pendingKind == "edit" {
+		b.WriteString(theme.Footer().Render("y approve · a approve for this session · n reject · esc cancel"))
+	} else {
+		b.WriteString(theme.Footer().Render("y run once · a always allow this command this session · n reject · esc cancel"))
+	}
+	return b.String()
+}
+
+type toolResultMsg struct {
+	name string
+	ok   bool
+	err  error
+}
+
 func sendCmd(client *api.Client, chatID string, req api.SendMessageRequest) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -885,10 +1102,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		cmd := nextWSCmd(m.wsEvents)
+		if realtime.IsToolRequest(msg.evt) {
+			if !m.workspaceOK || m.client == nil {
+				return m, cmd
+			}
+			var req tools.Request
+			if err := json.Unmarshal(msg.evt.Data, &req); err != nil {
+				m.status = "Malformed tool request"
+				return m, cmd
+			}
+			if strings.TrimSpace(req.RequestID) == "" || strings.TrimSpace(req.ToolCallID) == "" {
+				m.status = "Tool request missing ids"
+				return m, cmd
+			}
+			m.status = "Preparing workspace tool…"
+			return m.enqueueToolRequest(req, cmd)
+		}
 		if m.screen == screenRoom && (msg.evt.ChatID == "" || msg.evt.ChatID == m.chatID) && realtime.IsChatSignal(msg.evt) {
 			return m, tea.Batch(cmd, refreshRoomCmd(m.client, m.chatID))
 		}
 		return m, cmd
+
+	case toolResultMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("Tool %s failed: %v", firstNonEmpty(msg.name, "workspace"), msg.err)
+		} else if msg.ok {
+			m.status = fmt.Sprintf("Tool %s ok", firstNonEmpty(msg.name, "workspace"))
+		}
+		next, drainCmds := m.drainToolQueue()
+		if len(drainCmds) == 0 {
+			return next, nil
+		}
+		return next, tea.Batch(drainCmds...)
 
 	case pollMsg:
 		if m.screen != screenRoom {
@@ -938,6 +1183,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNewAI(msg)
 		case screenRoom:
 			return m.updateRoom(msg)
+		case screenApprove:
+			return m.updateApprove(msg)
 		}
 	}
 	return m, nil
@@ -1490,7 +1737,7 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 		}
 	case "diff":
-		out, err := workspace.GitDiff(m.workspaceDir)
+		out, err := workspace.GitDiff(m.workspaceDir, "", true)
 		if err != nil {
 			m.err = err.Error()
 		} else {
@@ -1757,6 +2004,8 @@ func (m model) View() string {
 		return m.viewNewAI()
 	case screenRoom:
 		return m.viewRoom()
+	case screenApprove:
+		return m.viewApprove()
 	default:
 		return ""
 	}
@@ -1970,7 +2219,7 @@ func (m model) renderRecentChats(limit int) string {
 		when := relativeTime(chat.UpdatedAt)
 		row := fmt.Sprintf("  %d. %s", i+1, title)
 		if when != "" {
-			row += theme.MutedText().Render("  ·  "+when)
+			row += theme.MutedText().Render("  ·  " + when)
 		}
 		b.WriteString(theme.ListItem().Render(row) + "\n")
 	}

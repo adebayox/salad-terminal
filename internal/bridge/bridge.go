@@ -9,7 +9,8 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/workspace"
 )
 
-// BuildCodeContext gathers turn-scoped local workspace context for terminal-initiated sends.
+// BuildCodeContext gathers a compact turn-scoped workspace hint for terminal sends.
+// Full file dumps are avoided when tools are attached — the AI should use tools on demand.
 // Only runs when the workspace is trusted. Never includes ignored/secret paths.
 func BuildCodeContext(root string, focusFiles []string) (*api.CodeContext, string, error) {
 	root, err := workspace.ResolveRoot(root)
@@ -20,13 +21,23 @@ func BuildCodeContext(root string, focusFiles []string) (*api.CodeContext, strin
 		return nil, "", fmt.Errorf("workspace not trusted (run: salad workspace trust)")
 	}
 
+	id, err := workspace.OpaqueID(root)
+	if err != nil {
+		return nil, "", err
+	}
+
 	status, _ := workspace.GitStatus(root)
-	diff, _ := workspace.GitDiff(root)
+	diff, _ := workspace.GitDiff(root, "", true)
 
 	ctx := &api.CodeContext{
-		WorkspaceRoot: root,
-		Language:      "multi",
+		WorkspaceID: id,
+		Language:    "multi",
 	}
+	// Project memory: SALAD.md / CLAUDE.md conventions ride every terminal turn.
+	if mem, memErr := workspace.ProjectMemory(root); memErr == nil && strings.TrimSpace(mem) != "" {
+		ctx.ProjectInstructions = trim(mem, 8000)
+	}
+	// Progressive context: only attach explicitly focused files, not a whole dump.
 	var open []api.OpenFileContent
 	for _, rel := range focusFiles {
 		rel = filepath.Clean(rel)
@@ -46,7 +57,7 @@ func BuildCodeContext(root string, focusFiles []string) (*api.CodeContext, strin
 
 	summary := strings.Builder{}
 	summary.WriteString("Terminal workspace context\n")
-	summary.WriteString("root: " + root + "\n")
+	summary.WriteString("workspace_id: " + id + "\n")
 	if strings.TrimSpace(status) != "" {
 		summary.WriteString("\ngit status:\n" + trim(status, 4000))
 		ctx.Diagnostics = append(ctx.Diagnostics, "git_status:\n"+trim(status, 2000))
