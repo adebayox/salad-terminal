@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	mdMu        sync.Mutex
-	mdRenderer  *glamour.TermRenderer
-	mdRenderW   int
+	mdMu       sync.Mutex
+	mdRenderer *glamour.TermRenderer
+	mdRenderW  int
 )
 
 func renderMarkdown(body string, width int) string {
