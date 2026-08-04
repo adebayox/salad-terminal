@@ -113,6 +113,7 @@ type CodeContext struct {
 	WorkspaceRoot       string            `json:"workspace_root,omitempty"`
 	WorkspaceID         string            `json:"workspace_id,omitempty"`
 	ProjectInstructions string            `json:"project_instructions,omitempty"`
+	Surface             string            `json:"surface,omitempty"`
 }
 
 type SendMessageRequest struct {

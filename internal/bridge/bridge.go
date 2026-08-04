@@ -32,6 +32,7 @@ func BuildCodeContext(root string, focusFiles []string) (*api.CodeContext, strin
 	ctx := &api.CodeContext{
 		WorkspaceID: id,
 		Language:    "multi",
+		Surface:     "salad_terminal",
 	}
 	// Project memory: SALAD.md / CLAUDE.md conventions ride every terminal turn.
 	if mem, memErr := workspace.ProjectMemory(root); memErr == nil && strings.TrimSpace(mem) != "" {

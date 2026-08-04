@@ -21,7 +21,21 @@
 
 **Cross-model verification (2026-08-04):** GPT-5.4 (flagship OpenAI) verified end-to-end in the same TUI flow — apply_edit approved → file fixed, run_command `go run bug.go` → `6`, git log auto → `cf590a4 initial`, turn complete. Earlier "GPT-5.4 does not see tools" was a misdiagnosis from a model refusal to enumerate tools; the activity trace shows GPT-5.4 calling read_file/apply_edit/run_command. Claude Sonnet verified the same.
 
-**Git tools:** `git_status`/`git_diff`/`git_log` are implemented in the terminal (`internal/tools`) and now advertised server-side ONLY for `client_surface=salad_terminal` (VSCodeTools shared with the VS Code extension is unchanged; new `ai.TerminalGitTools` + `MessageMetadataKeyClientSurface` preserved through metadata sanitization). Unit-tested (`TestTerminalSurfaceGetsGitToolsWhenCodeContextPresent`, `TestNonTerminalSurfaceGetsNoGitTools`).
+**Cross-model matrix (2026-08-04, live staging `66149ee`):**
+| Model | Provider | Tool-capable | Advertises + calls tools | Full TUI loop |
+|---|---|---|---|---|
+| claude-sonnet | Anthropic | yes | yes (probe + loop) | yes — approve/reject, file changed |
+| claude-opus | Anthropic | yes | yes (read_file, list_directory, run_command) | headless probe |
+| gpt-5.4 | OpenAI | yes | yes | yes — approve, file changed |
+| gemini-pro | Google | yes | yes | yes — approve edit + run_command + git_log, file changed |
+| gemini-flash | Google | yes | yes | headless probe |
+| grok-4 | xAI | yes | yes | headless probe |
+| mistral-medium | Mistral | yes | yes | headless probe |
+| groq-compound-mini | Groq | no (`function_calling`=partial) | tools correctly NOT sent | n/a — not tool-capable |
+
+Findings: the harness works across every tool-capable model family (Anthropic, OpenAI, Google, xAI, Mistral). Three providers were verified through the REAL TUI end-to-end (claude-sonnet, gpt-5.4, gemini-pro); the others were verified headless (backend broadcasts `tool_request`, model calls the tool — results time out only because no terminal answered). `groq-compound-mini` is a documented capability boundary: the backend does not offer it tools, and it returns empty streams on tool-demand prompts (pre-existing groq/provider flakiness — non-deterministic; simple turns and the plain-chat control work). Not a terminal regression.
+
+**Git tools:** `git_status`/`git_diff`/`git_log` are implemented in the terminal (`internal/tools`) and advertised server-side only when `code_context.surface = salad_terminal` (new `ai.TerminalGitTools`; VSCodeTools shared with the VS Code extension is unchanged). The surface signal rides the transient code context — it is never persisted on messages, so the durable message schema and web client are untouched. Unit-tested (`TestTerminalSurfaceGetsGitToolsWhenCodeContextPresent`, `TestNonTerminalSurfaceGetsNoGitTools`).
 
 **Git tools — LIVE VERIFIED (2026-08-04, backend `28b7426` deployed to staging):** drove the real TUI against the deployed backend; the AI's advertised tool list on a terminal turn is `read_file, search_codebase, list_directory, get_diagnostics, apply_edit, run_command, git_status, git_diff, git_log`; the model called `git_log` as a tool, the terminal auto-ran it (`cf590a4 (HEAD -> master) initial`, POST /api/tools/result 200), plus apply_edit (approved → file fixed) and run_command `go run bug.go` → `6`. Chat `6a71c64b6e19ebd864ad2175`.
 

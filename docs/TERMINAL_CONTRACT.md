@@ -65,15 +65,17 @@ ACK migration.
 2. Respect `.saladignore` + default deny for secrets/env files. Symlinks are
    resolved and re-checked against the workspace root before any read/write.
 3. When `attach_tools` is on and the workspace is trusted, terminal turns send
-   `client_surface=salad_terminal` + compact `code_context` (opaque workspace id,
-   git summary, optional focused files, and `project_instructions` loaded from
-   `SALAD.md`/`CLAUDE.md` at the workspace root). The Salad member personality and
-   chat history remain intact.
+   `client_surface=salad_terminal` metadata + compact `code_context` (opaque
+   workspace id, `surface="salad_terminal"`, git summary, optional focused files,
+   and `project_instructions` loaded from `SALAD.md`/`CLAUDE.md` at the workspace
+   root). The Salad member personality and chat history remain intact.
 4. Backend advertises the workspace tool set when `code_context` is present:
    read-only `list_directory`, `read_file`, `search_codebase`, `get_diagnostics`,
-   and edit/command `apply_edit`, `run_command`. For `client_surface=salad_terminal`
-   turns the backend additionally advertises `git_status`, `git_diff`, `git_log`.
-   The VS Code extension surface keeps the smaller shared set.
+   and edit/command `apply_edit`, `run_command`. When `code_context.surface` is
+   `salad_terminal` the backend additionally advertises `git_status`, `git_diff`,
+   `git_log`. The surface signal rides the transient code context (never stored
+   on messages), so the durable message schema and web client are untouched; the
+   VS Code extension keeps the smaller shared set.
 5. Terminal listens for `tool_request` on salad.v1 and resolves one at a time:
    read-only tools auto-run; `apply_edit` and non-read-only `run_command` open an
    in-TUI approval panel (`y` approve / `a` approve-for-session / `n` reject);
