@@ -56,12 +56,35 @@ ACK migration.
 - Track consumer ACK completion as a separate PR series (see `tasks/todo.md`
   “ACK platform track”).
 
-## Local tools (Phase 3)
+## Local tools (harness — Phase 1 read-only, Phase 2 edit, Phase 3 commands)
 
-1. Workspace trust prompt for the cwd (or `--workspace`).
-2. Respect `.saladignore` + default deny for secrets/env files.
-3. Allowlisted tools first: `read`, `git status`, `git diff`, permissions listing.
-4. Later: turn-scoped tool bridge only for turns started from this CLI.
+1. Workspace trust prompt for the cwd (or `--workspace`). Trust is stored in the
+   config dir (`trusted_workspaces.json`); legacy in-repo `.salad-trust` is still
+   honored. Workspace roots are symlink-canonicalized so a trust recorded through
+   a symlinked path matches the physical path the process resolves.
+2. Respect `.saladignore` + default deny for secrets/env files. Symlinks are
+   resolved and re-checked against the workspace root before any read/write.
+3. When `attach_tools` is on and the workspace is trusted, terminal turns send
+   `client_surface=salad_terminal` + compact `code_context` (opaque workspace id,
+   git summary, optional focused files, and `project_instructions` loaded from
+   `SALAD.md`/`CLAUDE.md` at the workspace root). The Salad member personality and
+   chat history remain intact.
+4. Backend advertises the workspace tool set when `code_context` is present:
+   read-only `list_directory`, `read_file`, `search_codebase`, `get_diagnostics`,
+   and edit/command `apply_edit`, `run_command`. For `client_surface=salad_terminal`
+   turns the backend additionally advertises `git_status`, `git_diff`, `git_log`.
+   The VS Code extension surface keeps the smaller shared set.
+5. Terminal listens for `tool_request` on salad.v1 and resolves one at a time:
+   read-only tools auto-run; `apply_edit` and non-read-only `run_command` open an
+   in-TUI approval panel (`y` approve / `a` approve-for-session / `n` reject);
+   read-only git commands (`git status/diff/log/show/...`) auto-run. Results are
+   posted to `POST /api/tools/result` (success or rejection error). If the
+   terminal is offline, the backend fails closed instead of waiting a full minute.
+6. `run_command` is bounded: no shell (`argv` only, metacharacters rejected),
+   workspace-bounded cwd, 60s timeout, 32KB output cap, secret-ish env vars
+   stripped. `apply_edit` is full-file replace with an atomic write, size caps,
+   and escape/ignore checks.
+7. Later phases: network categories, richer approval summaries.
 
 ## Non-goals
 
