@@ -98,7 +98,7 @@ jobs:
           ls -la dist
 
       - name: Upload release archive
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: terminal-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
