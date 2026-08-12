@@ -14,6 +14,10 @@ import (
 	"golang.org/x/term"
 )
 
+// BuildVersion is stamped by the release workflow so auth telemetry identifies
+// the exact terminal build that created a session.
+var BuildVersion = "dev"
+
 func EnsureInstallID(existing string) string {
 	if strings.TrimSpace(existing) != "" {
 		return existing
@@ -29,7 +33,7 @@ func DeviceInfo(installID string) api.DeviceInfo {
 	return api.DeviceInfo{
 		InstallID:  installID,
 		Platform:   "terminal",
-		AppVersion: "0.2.0-terminal",
+		AppVersion: BuildVersion + "-terminal",
 		DeviceName: "Salad Terminal (" + hostname + ")",
 	}
 }

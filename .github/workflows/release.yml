@@ -85,7 +85,7 @@ jobs:
           suffix=""
           [[ "${{ matrix.goos }}" == "windows" ]] && suffix=".exe"
           CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" go build \
-            -ldflags "-s -w -X main.Version=${ver}" \
+            -ldflags "-s -w -X main.Version=${ver} -X github.com/salad-ai/salad-terminal/internal/auth.BuildVersion=${ver}" \
             -o "dist/salad${suffix}" \
             ./cmd/salad
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
