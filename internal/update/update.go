@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ const (
 	releasesLatestURL = "https://api.github.com/repos/adebayox/salad-terminal/releases/latest"
 	repoAPI           = "https://api.github.com/repos/adebayox/salad-terminal/commits/main"
 	installURL        = "https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh"
+	installWindowsURL = "https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.ps1"
 	envDisable        = "SALAD_DISABLE_AUTOUPDATER"
 )
 
@@ -198,9 +200,15 @@ func gitLSRemoteSHA(ctx context.Context) (string, error) {
 }
 
 func runInstall() error {
-	// Binary install (no Go). SALAD_FORCE_REMOTE keeps contributor checkouts from
-	// rebuilding local source during auto-update.
-	cmd := exec.Command("bash", "-c", "curl -fsSL "+installURL+" | SALAD_FORCE_REMOTE=1 bash")
+	// Binary install (no Go). Use the native installer for each OS so Windows
+	// does not depend on bash or a Unix compatibility layer.
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		command := "$env:SALAD_FORCE_REMOTE='1'; iex (Invoke-RestMethod -Uri '" + installWindowsURL + "')"
+		cmd = exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command)
+	} else {
+		cmd = exec.Command("bash", "-c", "curl -fsSL "+installURL+" | SALAD_FORCE_REMOTE=1 bash")
+	}
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

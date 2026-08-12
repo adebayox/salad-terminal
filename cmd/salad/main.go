@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/salad-ai/salad-terminal/internal/auth"
@@ -19,6 +20,7 @@ import (
 var Version = "dev"
 
 const installURL = "https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh"
+const installWindowsURL = "https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.ps1"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -182,7 +184,13 @@ func normalize(v string) string {
 func runUpdate() error {
 	os.Setenv("SALAD_SKIP_AUTOUPDATE", "")
 	fmt.Println("Updating Salad Terminal from GitHub…")
-	cmd := exec.Command("bash", "-c", "curl -fsSL "+installURL+" | SALAD_FORCE_REMOTE=1 bash")
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		command := "$env:SALAD_FORCE_REMOTE='1'; iex (Invoke-RestMethod -Uri '" + installWindowsURL + "')"
+		cmd = exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command)
+	} else {
+		cmd = exec.Command("bash", "-c", "curl -fsSL "+installURL+" | SALAD_FORCE_REMOTE=1 bash")
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

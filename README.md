@@ -11,6 +11,15 @@ curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/instal
 Downloads a prebuilt binary for your Mac/Linux (same idea as Claude Code’s native installer).  
 Contributors building from source: `SALAD_FORCE_SOURCE=1` plus Go.
 
+On Windows, download and inspect the PowerShell installer, then run it:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+It installs to `%LOCALAPPDATA%\Salad\bin`, verifies `SHA256SUMS`, and adds that directory to the user PATH. The Windows release archives are also available directly from GitHub Releases.
+
 The installer resolves the latest versioned GitHub Release and refuses an
 archive without a matching `SHA256SUMS` entry. `SALAD_ALLOW_UNVERIFIED_INSTALL=1`
 exists only for recovery from an old development release and is not a shipping

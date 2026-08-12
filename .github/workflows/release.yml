@@ -2,7 +2,14 @@ name: release
 
 on:
   push:
-    branches: [main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example 0.2.0)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -36,6 +43,22 @@ jobs:
 
   release:
     needs: [test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -48,47 +71,73 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build compressed archives
+      - name: Build release archive
         run: |
           set -euo pipefail
-          ver="$(git rev-parse --short HEAD)"
-          echo -n "$ver" > VERSION
+          ver="${{ github.event.inputs.version || github.ref_name }}"
+          ver="${ver#v}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid semantic version: $ver" >&2
+            exit 1
+          fi
           mkdir -p dist
-          cp VERSION dist/VERSION
-          for os in darwin linux; do
-            for arch in amd64 arm64; do
-              name="salad-${os}-${arch}"
-              echo "building ${name} (${ver})"
-              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
-                -ldflags "-s -w -X main.Version=${ver}" \
-                -o "dist/salad" \
-                ./cmd/salad
-              # tar.gz is the industry default — ~3x smaller than a raw binary.
-              tar -C dist -czf "dist/${name}.tar.gz" salad
-              rm -f dist/salad
-            done
-          done
-          sha256sum dist/*.tar.gz > dist/SHA256SUMS
+          name="salad-${{ matrix.goos }}-${{ matrix.goarch }}"
+          suffix=""
+          [[ "${{ matrix.goos }}" == "windows" ]] && suffix=".exe"
+          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" go build \
+            -ldflags "-s -w -X main.Version=${ver}" \
+            -o "dist/salad${suffix}" \
+            ./cmd/salad
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            (cd dist && zip -q "${name}.zip" "salad${suffix}")
+            rm -f "dist/salad${suffix}"
+          else
+            tar -C dist -czf "dist/${name}.tar.gz" salad
+            rm -f dist/salad
+          fi
           ls -la dist
 
-      - name: Publish latest release
-        uses: ncipollo/release-action@v1
+      - name: Upload release archive
+        uses: actions/upload-artifact@v5
         with:
-          tag: v${{ github.sha }}
-          name: Salad Terminal (${{ github.sha }})
-          body: |
-            Prebuilt Salad Terminal binaries (compressed). Install with:
+          name: terminal-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
 
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash
-            ```
+  publish:
+    needs: [test, release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v6
+        with:
+          pattern: terminal-*
+          path: dist
+          merge-multiple: true
 
-            No Go required.
-          artifacts: dist/*
-          artifactErrorsFailBuild: true
-          allowUpdates: false
-          replacesArtifacts: false
-          makeLatest: true
-          commit: ${{ github.sha }}
-          omitBodyDuringUpdate: false
-          omitNameDuringUpdate: false
+      - name: Create release manifest
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          printf '%s\n' "$version" > dist/VERSION
+          (cd dist && sha256sum salad-*.* > SHA256SUMS)
+          printf '{"version":"%s","artifacts":[' "$version" > dist/release-manifest.json
+          first=1
+          while read -r hash _ name; do
+            [[ "$first" == 1 ]] || printf ',' >> dist/release-manifest.json
+            first=0
+            printf '{"name":"%s","sha256":"%s"}' "$name" "$hash" >> dist/release-manifest.json
+          done < dist/SHA256SUMS
+          printf ']}\n' >> dist/release-manifest.json
+
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "Salad Terminal ${GITHUB_REF_NAME#v}" \
+            --notes "Cross-platform Salad Terminal release. macOS/Linux use install.sh; Windows uses install.ps1. Artifacts are accompanied by SHA256SUMS and release-manifest.json."

@@ -4,6 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash
 #
 # Downloads a compressed prebuilt binary from GitHub Releases (no Go required).
+# Windows users should use install.ps1; this script deliberately fails closed.
 # Contributors: SALAD_FORCE_SOURCE=1 ./install.sh
 set -euo pipefail
 
@@ -72,6 +73,10 @@ detect_target() {
   arch="$(uname -m)"
   case "$os" in
     darwin|linux) ;;
+    mingw*|msys*|cygwin*)
+      echo "error: use install.ps1 on Windows: https://raw.githubusercontent.com/${REPO}/main/install.ps1" >&2
+      exit 1
+      ;;
     *)
       echo "error: unsupported OS '$os' (need macOS or Linux)" >&2
       exit 1
