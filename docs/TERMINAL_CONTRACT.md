@@ -95,8 +95,9 @@ ACK migration.
 - Replacing Ink/canvas `code_execution` or capability receipts
 - Staging → production rollout before collaboration matrix passes
 
-## Staging rule
+## Release rule
 
-Ship Terminal collaboration experiments against **staging only** until the
-equal-surface matrix (login, resume chat, send, participants, local tools on
-terminal turns only) passes.
+The public release uses `https://api.salad.ink`. Use
+`SALAD_API_URL=https://api-staging.salad.ink` only for QA or feature work that
+has not been promoted. Staging and production credentials, chats, and release
+checks must remain separate.

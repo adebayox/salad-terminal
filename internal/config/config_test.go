@@ -96,3 +96,23 @@ func TestClearCredentialsRemovesKeyringAndMetadata(t *testing.T) {
 		t.Fatal("LoadCredentials() succeeded after logout")
 	}
 }
+
+func TestClearCredentialsRemovesKnownEnvironmentTokensWithoutMetadata(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv(EnvConfigDir, t.TempDir())
+	if err := keyring.Set(keyringService, credentialKey(DefaultBaseURL, "access_token"), "prod-access"); err != nil {
+		t.Fatal(err)
+	}
+	if err := keyring.Set(keyringService, credentialKey("https://api-staging.salad.ink", "refresh_token"), "staging-refresh"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ClearCredentials(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keyring.Get(keyringService, credentialKey(DefaultBaseURL, "access_token")); err == nil {
+		t.Fatal("production token remained in keyring")
+	}
+	if _, err := keyring.Get(keyringService, credentialKey("https://api-staging.salad.ink", "refresh_token")); err == nil {
+		t.Fatal("staging token remained in keyring")
+	}
+}

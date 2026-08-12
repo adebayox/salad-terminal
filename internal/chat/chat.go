@@ -84,12 +84,21 @@ func Resume(chatID string) error {
 	boot, err := client.ChatBootstrap(ctx, chatID)
 	if err == nil {
 		title = firstNonEmpty(boot.Chat.Title, boot.Chat.Name, chatID)
-	} else if list, listErr := client.Bootstrap(ctx); listErr == nil {
+	} else {
+		found := false
+		list, listErr := client.Bootstrap(ctx)
+		if listErr != nil {
+			return fmt.Errorf("could not open chat: %w", err)
+		}
 		for _, c := range list.Chats {
 			if c.ID == chatID {
+				found = true
 				title = firstNonEmpty(c.Title, chatID)
 				break
 			}
+		}
+		if !found {
+			return fmt.Errorf("chat %q was not found or you no longer have access to it", chatID)
 		}
 	}
 

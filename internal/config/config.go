@@ -165,23 +165,35 @@ func SaveCredentials(creds *Credentials) error {
 		return fmt.Errorf("secure credential store unavailable: %w", err)
 	}
 	if err := keyring.Set(keyringService, credentialKey(creds.BaseURL, "refresh_token"), creds.RefreshToken); err != nil {
+		_ = keyring.Delete(keyringService, credentialKey(creds.BaseURL, "access_token"))
 		return fmt.Errorf("secure credential store unavailable: %w", err)
+	}
+	rollback := func() {
+		_ = keyring.Delete(keyringService, credentialKey(creds.BaseURL, "access_token"))
+		_ = keyring.Delete(keyringService, credentialKey(creds.BaseURL, "refresh_token"))
 	}
 	metadata := *creds
 	metadata.AccessToken = ""
 	metadata.RefreshToken = ""
 	dir, err := Dir()
 	if err != nil {
+		rollback()
 		return err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		rollback()
 		return err
 	}
 	path, err := credentialsPath()
 	if err != nil {
+		rollback()
 		return err
 	}
-	return writeCredentialsFile(path, &metadata)
+	if err := writeCredentialsFile(path, &metadata); err != nil {
+		rollback()
+		return err
+	}
+	return nil
 }
 
 func writeCredentialsFile(path string, creds *Credentials) error {
@@ -193,20 +205,29 @@ func writeCredentialsFile(path string, creds *Credentials) error {
 }
 
 func ClearCredentials() error {
-	creds, path, err := loadCredentialsFile()
+	path, err := credentialsPath()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return err
 	}
-	baseURL := creds.BaseURL
-	if baseURL == "" {
-		baseURL = DefaultBaseURL
+	bases := []string{DefaultBaseURL, "https://api-staging.salad.ink"}
+	if envBase := strings.TrimRight(strings.TrimSpace(os.Getenv(EnvBaseURL)), "/"); envBase != "" {
+		bases = append(bases, envBase)
 	}
-	for _, kind := range []string{"access_token", "refresh_token"} {
-		if deleteErr := keyring.Delete(keyringService, credentialKey(baseURL, kind)); deleteErr != nil && !errors.Is(deleteErr, keyring.ErrNotFound) {
-			return fmt.Errorf("clear secure credentials: %w", deleteErr)
+	if creds, _, loadErr := loadCredentialsFile(); loadErr == nil {
+		if baseURL := strings.TrimRight(strings.TrimSpace(creds.BaseURL), "/"); baseURL != "" {
+			bases = append(bases, baseURL)
+		}
+	}
+	seen := map[string]bool{}
+	for _, baseURL := range bases {
+		if seen[baseURL] {
+			continue
+		}
+		seen[baseURL] = true
+		for _, kind := range []string{"access_token", "refresh_token"} {
+			if deleteErr := keyring.Delete(keyringService, credentialKey(baseURL, kind)); deleteErr != nil && !errors.Is(deleteErr, keyring.ErrNotFound) {
+				return fmt.Errorf("clear secure credentials: %w", deleteErr)
+			}
 		}
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

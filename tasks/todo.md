@@ -1,5 +1,22 @@
 # Workspace tools harness (aligned with Salad CTO plan, 2026-07-20)
 
+## CLI product hardening — 2026-08-12
+
+Scope: make the complete Salad Terminal experience understandable and safe for a first-time engineer, without changing the existing chat/tool architecture unless verification shows a real product defect.
+
+- [x] First-run launch opens a clear sign-in choice; no hidden key bindings or undocumented next command.
+- [x] Email/password and browser sign-in show visible labels, navigation, retry, cancel, timeout, and account-creation recovery.
+- [x] `--help` and subcommand help work without starting a prompt; commands have consistent exit codes and human-readable errors.
+- [x] Auth/session/chat/resume/say/workspace/update flows have good, bad, offline, empty, stale, and non-interactive coverage.
+- [x] Technical diagnostics are opt-in (`SALAD_DEBUG=1`/`salad doctor`) and never replace the user-facing recovery message.
+- [x] Local credentials, workspace boundaries, approvals, and update/install behavior are reviewed for security and cross-platform compatibility.
+- [x] Public install and release artifacts are exercised from a clean macOS environment; Linux and Windows builds/install scripts are statically checked and smoke-tested where available.
+- [ ] Run independent challenge after implementation and record unresolved risks before release.
+
+Evidence/research: official Claude Code, Codex CLI, OpenCode, GitHub CLI, npm, Stripe CLI, Vercel CLI, CLI Guidelines, and Diátaxis references reviewed; fresh temporary Salad installs exercised. No implementation began until this plan was recorded.
+
+Implementation evidence: visible first-run PTY flow, clean-binary command matrix, live staging QA login/whoami/chat/resume/participants/workspace checks, unknown-chat recovery, room open/exit, production API doctor probe, local Go tests including race detection, vet, shell syntax check, and cross-target build attempts. Remaining release work is final review, release artifact verification, and independent challenge.
+
 Shared brain / separate hands. Full plan lives in `saladBE/tasks/todo.md`.
 
 - [x] Phase 0 (with BE): stop treating code_context as machine access; no advertised tools until bridge exists; preserve Salad identity on terminal turns
@@ -54,15 +71,15 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 
 ## Follow-ups
 
-- [ ] Allowlist loopback redirect URI on Google OAuth client; live-verify `--google`
+- [ ] Allowlist loopback redirect URI on Google OAuth client for staging; production browser entry is available, but staging requires provider-console configuration before end-to-end Google QA.
 - [ ] Token-stream UI for `stream_chunk` events
-- [ ] Production API default after soak
 
 ## CLI public release (2026-08-12)
 
 - [x] Local release gates: gofmt, go vet, unit tests, and six cross-compiled targets.
-- [x] Published `v0.2.0` with macOS, Linux, and Windows amd64/arm64 archives, `VERSION`, `SHA256SUMS`, and `release-manifest.json`.
+- [x] Published `v0.2.3` with macOS, Linux, and Windows amd64/arm64 archives, `VERSION`, `SHA256SUMS`, and `release-manifest.json`.
 - [x] Verified all six public archive checksums and archive contents; Unix installer exercised against the public release.
 - [x] Fixed release workflow checkout and manifest generation; added manifest validation so empty names or malformed hashes fail the publish job.
-- [x] Re-uploaded and re-verified corrected `release-manifest.json` for the already-published `v0.2.0` release.
-- [x] Fixed installer cleanup under `set -u`; public-release macOS arm64 install now exits successfully and reports `salad 0.2.0`.
+- [x] Re-uploaded and re-verified corrected `release-manifest.json` for the already-published `v0.2.3` release.
+- [x] Fixed installer cleanup under `set -u`; public-release macOS arm64 install now exits successfully and reports `salad 0.2.3`.
+- [ ] Publish `v0.2.4` after the product-hardening commit passes CI and clean-install verification.

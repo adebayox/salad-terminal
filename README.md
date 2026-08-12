@@ -2,8 +2,7 @@
 
 Use the same Salad chats from your terminal.
 
-Salad Terminal is a native command-line app. You do not need npm or Go to
-install the published release.
+Salad Terminal is a native command-line app.
 
 ## Install
 
@@ -19,7 +18,7 @@ system and CPU. It checks the SHA-256 checksum before it installs the binary.
 To install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.1 bash
+curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.4 bash
 ```
 
 ### Windows
@@ -37,20 +36,22 @@ The installer checks the SHA-256 checksum and puts `salad.exe` in
 ## Start
 
 ```bash
-salad login
 salad
 ```
 
-Run `salad` from the repository that you want to work on. The first command
-opens sign-in. The second command opens a new Salad chat.
+Run `salad` from the repository that you want to work on. On first launch,
+choose Google sign-in or enter your email and password. If you do not have an
+account, choose account creation in the browser. Return to the terminal when
+sign-in is complete.
 
-If you do not have a Salad account, run `salad login --google`. Your browser opens the Salad sign-in page. Sign in with Google; Salad creates your account on first sign-in and returns you to the terminal. For an existing email/password account, run `salad login`. An unknown email or wrong password returns an invalid-credentials error; repeated failed attempts can trigger the normal login rate limit. Set `SALAD_API_URL=https://api-staging.salad.ink` only when testing the staging environment.
-
-You can also use Google sign-in:
+You can also start sign-in directly:
 
 ```bash
 salad login --google
+salad login
 ```
+
+Set `SALAD_API_URL=https://api-staging.salad.ink` only when testing staging.
 
 ## Common commands
 
@@ -69,12 +70,16 @@ salad login --google
 | `salad version` | Show the installed version. |
 | `salad update` | Check for and install an update now. |
 | `salad help` | Show the command list. |
+| `salad doctor` | Check the install, sign-in, API, and workspace. |
 
 The app checks for updates when it starts. To disable this for one command:
 
 ```bash
 SALAD_DISABLE_AUTOUPDATER=1 salad
 ```
+
+If you need technical details for a support report, add `SALAD_DEBUG=1` to
+the command. Normal errors stay short and tell you what to do next.
 
 ## Work with a repository
 

@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+func TestHumanizeErrorHidesHTTPStatusAndInternalAuthCode(t *testing.T) {
+	err := &APIError{Status: http.StatusUnauthorized, Code: "AUTH_INVALID_CREDENTIALS", Message: "Invalid email or password"}
+	got := HumanizeError(err)
+	if got != "The email or password is not correct. Check it and try again." {
+		t.Fatalf("HumanizeError() = %q", got)
+	}
+}
+
+func TestHumanizeErrorHandlesUnavailableService(t *testing.T) {
+	err := &APIError{Status: http.StatusBadGateway, Code: "UPSTREAM_FAILURE", Message: "upstream unavailable"}
+	if got := HumanizeError(err); got != "Salad is temporarily unavailable. Try again in a moment." {
+		t.Fatalf("HumanizeError() = %q", got)
+	}
+}
+
 func TestClientRefreshesOnceAfterUnauthorizedResponse(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
