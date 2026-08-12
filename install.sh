@@ -229,6 +229,6 @@ fi
 
 echo
 echo "Done. Next:"
-echo "  salad login   # once"
+echo "  salad login --google   # once; opens browser sign-in"
 echo "  salad"
 echo "  salad update  # later"

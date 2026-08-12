@@ -311,6 +311,14 @@ func (c *Client) LoginGoogle(ctx context.Context, code, codeVerifier, redirectUR
 	return &out, err
 }
 
+func (c *Client) ExchangeMobileSession(ctx context.Context, device DeviceInfo) (*AuthResponse, error) {
+	var out AuthResponse
+	err := c.doJSON(ctx, http.MethodPost, "/api/mobile/auth/exchange", map[string]any{
+		"device_info": device,
+	}, &out)
+	return &out, err
+}
+
 func (c *Client) Refresh(ctx context.Context, refreshToken string, device DeviceInfo) (*AuthResponse, error) {
 	var out AuthResponse
 	err := c.doJSON(ctx, http.MethodPost, "/api/mobile/auth/refresh", map[string]any{
