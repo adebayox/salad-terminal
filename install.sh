@@ -9,7 +9,22 @@ set -euo pipefail
 
 REPO="${SALAD_TERMINAL_REPO:-adebayox/salad-terminal}"
 RELEASE_TAG="${SALAD_TERMINAL_RELEASE:-latest}"
-BASE_URL="${SALAD_TERMINAL_BASE_URL:-https://github.com/${REPO}/releases/download/${RELEASE_TAG}}"
+
+resolve_release_tag() {
+  if [[ "$RELEASE_TAG" != "latest" ]]; then
+    echo "$RELEASE_TAG"
+    return
+  fi
+  need_cmd curl
+  local payload tag
+  payload="$(curl -fsSL --connect-timeout 10 --retry 3 --retry-all-errors "https://api.github.com/repos/${REPO}/releases/latest")"
+  tag="$(printf '%s' "$payload" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [[ -z "$tag" ]]; then
+    echo "error: could not resolve the latest immutable release for ${REPO}" >&2
+    exit 1
+  fi
+  echo "$tag"
+}
 
 need_cmd() {
   local cmd="$1"
@@ -91,15 +106,17 @@ curl_download() {
 download_release_binary() {
   need_cmd curl
   need_cmd tar
-  local target archive url tmp ver
+  local target archive url tmp ver resolved_tag checksums expected actual
   target="$(detect_target)"
   archive="salad-${target}.tar.gz"
-  url="${BASE_URL}/${archive}"
+  resolved_tag="$(resolve_release_tag)"
+  local base_url="${SALAD_TERMINAL_BASE_URL:-https://github.com/${REPO}/releases/download/${resolved_tag}}"
+  url="${base_url}/${archive}"
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/salad-terminal.XXXXXX")"
   cleanup() { rm -rf "$tmp"; }
   trap cleanup EXIT
 
-  echo "Downloading Salad Terminal (${RELEASE_TAG} / ${target})…"
+  echo "Downloading Salad Terminal (${resolved_tag} / ${target})…"
   if ! curl_download "$url" "${tmp}/${archive}"; then
     echo "error: could not download ${url}" >&2
     echo >&2
@@ -109,6 +126,29 @@ download_release_binary() {
     echo "  SALAD_FORCE_SOURCE=1 curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash" >&2
     exit 1
   fi
+  if ! curl_download "${base_url}/SHA256SUMS" "${tmp}/SHA256SUMS"; then
+    if [[ "${SALAD_ALLOW_UNVERIFIED_INSTALL:-}" != "1" ]]; then
+      echo "error: release has no SHA256SUMS manifest; refusing unverified install" >&2
+      exit 1
+    fi
+    echo "warning: installing without a checksum manifest because SALAD_ALLOW_UNVERIFIED_INSTALL=1" >&2
+  else
+    checksums="$(awk -v name="$archive" '$2 == name { print $1; exit }' "${tmp}/SHA256SUMS")"
+    if [[ -z "$checksums" ]]; then
+      echo "error: SHA256SUMS does not contain ${archive}" >&2
+      exit 1
+    fi
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual="$(sha256sum "${tmp}/${archive}" | awk '{print $1}')"
+    else
+      need_cmd shasum
+      actual="$(shasum -a 256 "${tmp}/${archive}" | awk '{print $1}')"
+    fi
+    if [[ "$actual" != "$checksums" ]]; then
+      echo "error: checksum verification failed for ${archive}" >&2
+      exit 1
+    fi
+  fi
 
   tar -xzf "${tmp}/${archive}" -C "$tmp"
   if [[ ! -f "${tmp}/salad" ]]; then
@@ -117,9 +157,9 @@ download_release_binary() {
   fi
   chmod +x "${tmp}/salad"
 
-  ver="$(curl -fsSL --connect-timeout 10 --retry 3 --retry-all-errors "${BASE_URL}/VERSION" 2>/dev/null || true)"
+  ver="$(curl -fsSL --connect-timeout 10 --retry 3 --retry-all-errors "${base_url}/VERSION" 2>/dev/null || true)"
   if [[ -z "$ver" ]]; then
-    ver="$RELEASE_TAG"
+    ver="$resolved_tag"
   fi
 
   install_binary "${tmp}/salad"

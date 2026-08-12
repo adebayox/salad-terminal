@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	versionURL = "https://github.com/adebayox/salad-terminal/releases/download/latest/VERSION"
-	repoAPI    = "https://api.github.com/repos/adebayox/salad-terminal/commits/main"
-	installURL = "https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh"
-	envDisable = "SALAD_DISABLE_AUTOUPDATER"
+	releasesLatestURL = "https://api.github.com/repos/adebayox/salad-terminal/releases/latest"
+	repoAPI           = "https://api.github.com/repos/adebayox/salad-terminal/commits/main"
+	installURL        = "https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh"
+	envDisable        = "SALAD_DISABLE_AUTOUPDATER"
 )
 
 type state struct {
@@ -137,10 +137,11 @@ func fetchMainSHA() (string, error) {
 }
 
 func fetchReleaseVersion(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesLatestURL, nil)
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "salad-terminal")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -148,11 +149,39 @@ func fetchReleaseVersion(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("version %s", resp.Status)
+		return "", fmt.Errorf("latest release %s", resp.Status)
 	}
-	var buf [64]byte
-	n, _ := resp.Body.Read(buf[:])
-	return normalizeSHA(string(buf[:n])), nil
+	var release struct {
+		Assets []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", err
+	}
+	for _, asset := range release.Assets {
+		if asset.Name != "VERSION" || asset.BrowserDownloadURL == "" {
+			continue
+		}
+		versionReq, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.BrowserDownloadURL, nil)
+		if err != nil {
+			return "", err
+		}
+		versionReq.Header.Set("User-Agent", "salad-terminal")
+		versionResp, err := http.DefaultClient.Do(versionReq)
+		if err != nil {
+			return "", err
+		}
+		defer versionResp.Body.Close()
+		if versionResp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("version asset %s", versionResp.Status)
+		}
+		var buf [64]byte
+		n, _ := versionResp.Body.Read(buf[:])
+		return normalizeSHA(string(buf[:n])), nil
+	}
+	return "", fmt.Errorf("latest release has no VERSION asset")
 }
 
 func gitLSRemoteSHA(ctx context.Context) (string, error) {

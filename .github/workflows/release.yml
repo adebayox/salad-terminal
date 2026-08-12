@@ -68,13 +68,14 @@ jobs:
               rm -f dist/salad
             done
           done
+          sha256sum dist/*.tar.gz > dist/SHA256SUMS
           ls -la dist
 
       - name: Publish latest release
         uses: ncipollo/release-action@v1
         with:
-          tag: latest
-          name: Salad Terminal (latest)
+          tag: v${{ github.sha }}
+          name: Salad Terminal (${{ github.sha }})
           body: |
             Prebuilt Salad Terminal binaries (compressed). Install with:
 
@@ -85,8 +86,8 @@ jobs:
             No Go required.
           artifacts: dist/*
           artifactErrorsFailBuild: true
-          allowUpdates: true
-          replacesArtifacts: true
+          allowUpdates: false
+          replacesArtifacts: false
           makeLatest: true
           commit: ${{ github.sha }}
           omitBodyDuringUpdate: false

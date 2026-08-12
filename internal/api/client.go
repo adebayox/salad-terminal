@@ -15,6 +15,9 @@ type Client struct {
 	BaseURL     string
 	AccessToken string
 	HTTP        *http.Client
+	// RefreshFunc is invoked once when an authenticated request receives 401.
+	// The owner is responsible for refreshing and persisting the credentials.
+	RefreshFunc func(context.Context) error
 }
 
 func New(baseURL, accessToken string) *Client {
@@ -147,6 +150,10 @@ func (e *APIError) Error() string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte, error) {
+	return c.doWithRefresh(ctx, method, path, body, true)
+}
+
+func (c *Client) doWithRefresh(ctx context.Context, method, path string, body any, allowRefresh bool) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -176,6 +183,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusUnauthorized && allowRefresh && c.RefreshFunc != nil {
+			if refreshErr := c.RefreshFunc(ctx); refreshErr == nil {
+				return c.doWithRefresh(ctx, method, path, body, false)
+			}
+		}
 		var envelope struct {
 			Error   string `json:"error"`
 			Code    string `json:"code"`

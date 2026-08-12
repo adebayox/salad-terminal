@@ -3,9 +3,13 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+
+	"github.com/zalando/go-keyring"
 )
 
 const (
@@ -13,6 +17,7 @@ const (
 	DefaultBaseURL = "https://api-staging.salad.ink"
 	EnvBaseURL     = "SALAD_API_URL"
 	EnvConfigDir   = "SALAD_CONFIG_DIR"
+	keyringService = "salad-terminal"
 )
 
 type Credentials struct {
@@ -90,26 +95,81 @@ func activeChatPath() (string, error) {
 	return filepath.Join(dir, "active_chat.json"), nil
 }
 
-func LoadCredentials() (*Credentials, error) {
+func loadCredentialsFile() (*Credentials, string, error) {
 	path, err := credentialsPath()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, path, err
 	}
 	var creds Credentials
 	if err := json.Unmarshal(data, &creds); err != nil {
+		return nil, path, err
+	}
+	return &creds, path, nil
+}
+
+func credentialKey(baseURL, kind string) string {
+	return kind + "|" + strings.TrimRight(strings.TrimSpace(baseURL), "/")
+}
+
+func LoadCredentials() (*Credentials, error) {
+	creds, path, err := loadCredentialsFile()
+	if err != nil {
 		return nil, err
 	}
-	if creds.AccessToken == "" {
-		return nil, errors.New("not logged in")
+	baseURL := creds.BaseURL
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+		creds.BaseURL = baseURL
 	}
-	return &creds, nil
+	accessToken, accessErr := keyring.Get(keyringService, credentialKey(baseURL, "access_token"))
+	refreshToken, refreshErr := keyring.Get(keyringService, credentialKey(baseURL, "refresh_token"))
+	if accessErr == nil && refreshErr == nil && accessToken != "" {
+		creds.AccessToken = accessToken
+		creds.RefreshToken = refreshToken
+		return creds, nil
+	}
+
+	// Migrate the legacy plaintext file only after both secrets are safely
+	// written to the OS credential store.
+	if creds.AccessToken != "" && creds.RefreshToken != "" {
+		if err := keyring.Set(keyringService, credentialKey(baseURL, "access_token"), creds.AccessToken); err != nil {
+			return nil, fmt.Errorf("secure credential store unavailable: %w", err)
+		}
+		if err := keyring.Set(keyringService, credentialKey(baseURL, "refresh_token"), creds.RefreshToken); err != nil {
+			return nil, fmt.Errorf("secure credential store unavailable: %w", err)
+		}
+		metadata := *creds
+		metadata.AccessToken = ""
+		metadata.RefreshToken = ""
+		if err := writeCredentialsFile(path, &metadata); err != nil {
+			return nil, fmt.Errorf("migrate credentials file: %w", err)
+		}
+		return creds, nil
+	}
+
+	if accessErr != nil {
+		return nil, fmt.Errorf("credentials unavailable: %w", accessErr)
+	}
+	return nil, fmt.Errorf("credentials unavailable: %w", refreshErr)
 }
 
 func SaveCredentials(creds *Credentials) error {
+	if creds == nil || strings.TrimSpace(creds.BaseURL) == "" || creds.AccessToken == "" || creds.RefreshToken == "" {
+		return errors.New("access and refresh tokens plus base URL are required")
+	}
+	if err := keyring.Set(keyringService, credentialKey(creds.BaseURL, "access_token"), creds.AccessToken); err != nil {
+		return fmt.Errorf("secure credential store unavailable: %w", err)
+	}
+	if err := keyring.Set(keyringService, credentialKey(creds.BaseURL, "refresh_token"), creds.RefreshToken); err != nil {
+		return fmt.Errorf("secure credential store unavailable: %w", err)
+	}
+	metadata := *creds
+	metadata.AccessToken = ""
+	metadata.RefreshToken = ""
 	dir, err := Dir()
 	if err != nil {
 		return err
@@ -121,6 +181,10 @@ func SaveCredentials(creds *Credentials) error {
 	if err != nil {
 		return err
 	}
+	return writeCredentialsFile(path, &metadata)
+}
+
+func writeCredentialsFile(path string, creds *Credentials) error {
 	data, err := json.MarshalIndent(creds, "", "  ")
 	if err != nil {
 		return err
@@ -129,9 +193,21 @@ func SaveCredentials(creds *Credentials) error {
 }
 
 func ClearCredentials() error {
-	path, err := credentialsPath()
+	creds, path, err := loadCredentialsFile()
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
+	}
+	baseURL := creds.BaseURL
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	for _, kind := range []string{"access_token", "refresh_token"} {
+		if deleteErr := keyring.Delete(keyringService, credentialKey(baseURL, kind)); deleteErr != nil && !errors.Is(deleteErr, keyring.ErrNotFound) {
+			return fmt.Errorf("clear secure credentials: %w", deleteErr)
+		}
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err

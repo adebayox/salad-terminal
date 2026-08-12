@@ -103,19 +103,15 @@ func Logout() error {
 }
 
 func WhoAmI() error {
-	creds, err := config.LoadCredentials()
+	client, creds, err := AuthedClient()
 	if err != nil {
-		return fmt.Errorf("not logged in (run: salad login)")
+		return err
 	}
-	client := api.New(config.BaseURL(), creds.AccessToken)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	user, err := client.Me(ctx)
 	if err != nil {
-		// Fall back to cached credentials if /me shape differs.
-		fmt.Printf("%s <%s>\n", displayName(creds), creds.Email)
-		fmt.Printf("user_id=%s base_url=%s\n", creds.UserID, config.BaseURL())
-		return nil
+		return fmt.Errorf("whoami failed: %w", err)
 	}
 	name := firstNonEmpty(user.Name, creds.Name, user.Email, creds.Email)
 	email := firstNonEmpty(user.Email, creds.Email)
@@ -129,7 +125,26 @@ func AuthedClient() (*api.Client, *config.Credentials, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("not logged in (run: salad login)")
 	}
-	return api.New(config.BaseURL(), creds.AccessToken), creds, nil
+	client := api.New(config.BaseURL(), creds.AccessToken)
+	client.RefreshFunc = func(ctx context.Context) error {
+		refreshClient := api.New(creds.BaseURL, "")
+		response, refreshErr := refreshClient.Refresh(ctx, creds.RefreshToken, DeviceInfo(creds.InstallID))
+		if refreshErr != nil {
+			return refreshErr
+		}
+		if response.Session.AccessToken == "" || response.Session.RefreshToken == "" {
+			return fmt.Errorf("refresh response did not contain a complete session")
+		}
+		creds.AccessToken = response.Session.AccessToken
+		creds.RefreshToken = response.Session.RefreshToken
+		creds.ExpiresAt = response.Session.ExpiresAt.Format(time.RFC3339)
+		creds.UserID = firstNonEmpty(response.Session.UserID, response.User.ID, creds.UserID)
+		creds.Email = firstNonEmpty(response.User.Email, creds.Email)
+		creds.Name = firstNonEmpty(response.User.Name, creds.Name)
+		creds.InstallID = firstNonEmpty(response.Session.InstallID, creds.InstallID)
+		return config.SaveCredentials(creds)
+	}
+	return client, creds, nil
 }
 
 func displayName(creds *config.Credentials) string {
