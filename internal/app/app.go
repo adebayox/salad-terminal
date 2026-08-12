@@ -125,11 +125,12 @@ type (
 		err   error
 	}
 	roomMsg struct {
-		chatID   string
-		title    string
-		messages []api.ChatMessage
-		members  []member
-		err      error
+		chatID     string
+		title      string
+		messages   []api.ChatMessage
+		members    []member
+		err        error
+		persistErr error
 	}
 	pollMsg struct {
 		messages []api.ChatMessage
@@ -142,7 +143,8 @@ type (
 		ok  bool
 		err error
 	}
-	sentMsg struct {
+	wsRetryMsg struct{}
+	sentMsg    struct {
 		msg *api.ChatMessage
 		err error
 	}
@@ -246,8 +248,8 @@ func openRoomCmd(client *api.Client, chatID string) tea.Cmd {
 		if err != nil {
 			return roomMsg{err: err}
 		}
-		_ = config.SaveActiveChat(&config.ActiveChat{ChatID: chatID, Title: title})
-		return roomMsg{chatID: chatID, title: title, messages: messages, members: members}
+		persistErr := config.SaveActiveChat(&config.ActiveChat{ChatID: chatID, Title: title})
+		return roomMsg{chatID: chatID, title: title, messages: messages, members: members, persistErr: persistErr}
 	}
 }
 
@@ -340,8 +342,8 @@ func createChatAndOpenCmd(client *api.Client, workspaceDir string, aiSlugs []str
 		} else {
 			members = membersFromAISlugs(aiSlugs)
 		}
-		_ = config.SaveActiveChat(&config.ActiveChat{ChatID: chat.ID, Title: title})
-		return roomMsg{chatID: chat.ID, title: title, messages: nil, members: members}
+		persistErr := config.SaveActiveChat(&config.ActiveChat{ChatID: chat.ID, Title: title})
+		return roomMsg{chatID: chat.ID, title: title, messages: nil, members: members, persistErr: persistErr}
 	}
 }
 
@@ -544,7 +546,6 @@ func (m *model) openSelectedChat(id, title string) tea.Cmd {
 	m.err = ""
 	m.composer.SetValue("")
 	m.composer.Focus()
-	_ = config.BindWorkspace(m.workspaceDir, id, title)
 	return openRoomCmd(m.client, id)
 }
 
@@ -558,7 +559,7 @@ func (m *model) showResumePicker(status string) tea.Cmd {
 }
 
 func (m *model) afterAuth() tea.Cmd {
-	wsCmd := wsListenCmd(config.BaseURL(), m.creds.AccessToken)
+	wsCmd := wsListenCmd(m.creds.BaseURL, m.creds.AccessToken)
 
 	// Explicit resume picker (claude --resume).
 	if m.forceResume {
@@ -569,7 +570,6 @@ func (m *model) afterAuth() tea.Cmd {
 	if m.chatID != "" {
 		m.screen = screenRoom
 		m.status = "Opening…"
-		_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
 		return tea.Batch(openRoomCmd(m.client, m.chatID), wsCmd)
 	}
 
@@ -580,7 +580,6 @@ func (m *model) afterAuth() tea.Cmd {
 			m.chatTitle = title
 			m.screen = screenRoom
 			m.status = "Continuing…"
-			_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
 			return tea.Batch(openRoomCmd(m.client, m.chatID), wsCmd)
 		}
 		return tea.Batch(m.showResumePicker("No recent chat here · n new · enter open"), wsCmd)
@@ -695,6 +694,10 @@ func wsListenCmd(baseURL, token string) tea.Cmd {
 	}
 }
 
+func wsRetryCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return wsRetryMsg{} })
+}
+
 type wsSessionMsg struct {
 	client *realtime.Client
 	ch     <-chan realtime.Event
@@ -708,6 +711,23 @@ func nextWSCmd(ch <-chan realtime.Event) tea.Cmd {
 		}
 		return wsEventMsg{evt: evt}
 	}
+}
+
+func validateToolRequestScope(currentScreen screen, activeChatID, workspaceDir, eventChatID string, workspaceOK bool, req tools.Request) error {
+	if currentScreen != screenRoom || strings.TrimSpace(eventChatID) == "" || eventChatID != activeChatID {
+		return fmt.Errorf("tool request is outside the active chat")
+	}
+	if strings.TrimSpace(req.RequestID) == "" || strings.TrimSpace(req.ToolCallID) == "" {
+		return fmt.Errorf("tool request is missing ids")
+	}
+	if !workspaceOK {
+		return fmt.Errorf("workspace tools are not enabled here")
+	}
+	expectedWorkspace, err := workspace.OpaqueID(workspaceDir)
+	if err != nil || strings.TrimSpace(req.WorkspaceID) == "" || req.WorkspaceID != expectedWorkspace {
+		return fmt.Errorf("tool request is for another workspace")
+	}
+	return nil
 }
 
 // executeToolCmd runs a tool (read-only, or an already-approved edit/command)
@@ -939,7 +959,7 @@ func loginGoogleCmd() tea.Cmd {
 
 func signupCmd() tea.Cmd {
 	return func() tea.Msg {
-		return signupDoneMsg{err: auth.OpenSignupBrowser()}
+		return signupDoneMsg{err: auth.OpenSignupBrowserFor(config.BaseURL())}
 	}
 }
 
@@ -1047,7 +1067,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case addedAIsMsg:
 		m.chatCreating = false
-		if msg.err != nil {
+		if msg.err != nil && msg.count == 0 {
 			m.err = api.HumanizeError(msg.err)
 			m.status = "Could not add AIs"
 			return m, nil
@@ -1055,6 +1075,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenRoom
 		m.status = fmt.Sprintf("Added %d AI(s) — @mention them", msg.count)
 		m.err = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("Some AIs could not be added: %s", api.HumanizeError(msg.err))
+		}
 		return m, openRoomCmd(m.client, m.chatID)
 
 	case createdChatMsg:
@@ -1092,7 +1115,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.members = msg.members
 		m.err = ""
 		m.status = ""
-		_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
+		if err := config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle); err != nil {
+			m.err = fmt.Sprintf("Chat opened, but local continue state could not be saved: %v", err)
+			m.status = "Local state not saved"
+		} else if msg.persistErr != nil {
+			m.err = fmt.Sprintf("Chat opened, but local state could not be saved: %v", msg.persistErr)
+			m.status = "Local state not saved"
+		}
 		m.composer.Focus()
 		m.refreshViewport()
 		m.viewport.GotoBottom()
@@ -1105,15 +1134,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wsClient = msg.client
 		m.wsEvents = msg.ch
 		m.live = "ws"
+		if m.screen == screenRoom {
+			m.status = "Live updates connected"
+		}
 		return m, nextWSCmd(m.wsEvents)
 
 	case wsReadyMsg:
 		if !msg.ok {
+			if m.wsClient != nil {
+				m.wsClient.Close()
+				m.wsClient = nil
+			}
 			m.live = "poll"
 			m.wsEvents = nil
-			return m, nil
+			if m.screen == screenRoom {
+				m.status = "Live updates disconnected; retrying…"
+			}
+			return m, wsRetryCmd()
 		}
 		return m, nil
+
+	case wsRetryMsg:
+		if m.creds == nil || m.screen == screenBoot || m.screen == screenLogin {
+			return m, nil
+		}
+		return m, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken)
 
 	case wsEventMsg:
 		if m.wsEvents == nil {
@@ -1121,7 +1166,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmd := nextWSCmd(m.wsEvents)
 		if realtime.IsToolRequest(msg.evt) {
-			if !m.workspaceOK || m.client == nil {
+			if m.client == nil {
+				m.status = "Ignored tool request: no active API session"
 				return m, cmd
 			}
 			var req tools.Request
@@ -1129,8 +1175,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Malformed tool request"
 				return m, cmd
 			}
-			if strings.TrimSpace(req.RequestID) == "" || strings.TrimSpace(req.ToolCallID) == "" {
-				m.status = "Tool request missing ids"
+			if err := validateToolRequestScope(m.screen, m.chatID, m.workspaceDir, msg.evt.ChatID, m.workspaceOK, req); err != nil {
+				m.status = "Ignored tool request: " + strings.TrimPrefix(err.Error(), "tool request is ")
 				return m, cmd
 			}
 			m.status = "Preparing workspace tool…"
@@ -1316,50 +1362,30 @@ func (m model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "q":
-		if m.loginFocus == 2 {
-			return m, tea.Quit
-		}
+	case "c":
 		if m.loginFocus == 0 {
-			m.loginEmail += "q"
-		} else {
-			m.loginPass += "q"
+			m.loginEmail += "c"
+			return m, nil
+		}
+		if m.loginFocus == 1 {
+			m.loginPass += "c"
+			return m, nil
 		}
 		return m, nil
-	case "g":
-		if m.loginFocus != 2 {
-			if m.loginFocus == 0 {
-				m.loginEmail += "g"
-			} else {
-				m.loginPass += "g"
-			}
-			return m, nil
-		}
-		m.loginFocus = 2
-		m.status = "Opening browser sign-in…"
-		m.err = ""
-		return m, loginGoogleCmd()
-	case "c":
-		if m.loginFocus != 2 {
-			if m.loginFocus == 0 {
-				m.loginEmail += "c"
-			} else {
-				m.loginPass += "c"
-			}
-			return m, nil
-		}
-		m.status = "Opening account creation…"
-		m.err = ""
-		return m, signupCmd()
 	case "tab", "down":
-		m.loginFocus = (m.loginFocus + 1) % 3
+		m.loginFocus = (m.loginFocus + 1) % 4
 	case "shift+tab", "up":
-		m.loginFocus = (m.loginFocus + 2) % 3
+		m.loginFocus = (m.loginFocus + 3) % 4
 	case "enter":
 		if m.loginFocus == 2 {
 			m.status = "Opening browser sign-in…"
 			m.err = ""
 			return m, loginGoogleCmd()
+		}
+		if m.loginFocus == 3 {
+			m.status = "Opening account creation…"
+			m.err = ""
+			return m, signupCmd()
 		}
 		if strings.TrimSpace(m.loginEmail) == "" {
 			m.err = "Enter your email address, or choose Continue with Google."
@@ -1385,7 +1411,7 @@ func (m model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(msg.Runes) == 0 {
 			return m, nil
 		}
-		if m.loginFocus == 2 {
+		if m.loginFocus >= 2 {
 			return m, nil
 		}
 		ch := string(msg.Runes)
@@ -2098,14 +2124,18 @@ func (m model) viewLogin() string {
 	if m.loginFocus == 2 {
 		google = theme.Brand().Render("▸ Continue with Google")
 	}
-	form := theme.Composer().Width(min(w-4, 56)).Render(fmt.Sprintf("%s\n%s\n\n%s\n%s\n\n%s", emailLabel, emailVal, passLabel, passVal, google))
+	account := "  Create a Salad account in your browser"
+	if m.loginFocus == 3 {
+		account = theme.Brand().Render("▸ Create a Salad account in your browser")
+	}
+	form := theme.Composer().Width(min(w-4, 56)).Render(fmt.Sprintf("%s\n%s\n\n%s\n%s\n\n%s\n%s", emailLabel, emailVal, passLabel, passVal, google, account))
 	errLine := ""
 	if m.err != "" {
 		errLine = "\n" + theme.Error().Render(m.err)
 	}
-	account := theme.MutedText().Render("New to Salad? Press c to create an account in your browser.")
-	help := theme.Footer().Render("↑↓ or Tab move · Enter choose · g Google · q quit")
-	return lipgloss.JoinVertical(lipgloss.Left, banner, "", sub, "", form, account, errLine, "", help)
+	accountHint := theme.MutedText().Render("New to Salad? Select account creation above, then return here to sign in.")
+	help := theme.Footer().Render("↑↓ or Tab move · Enter choose · Ctrl+C quit")
+	return lipgloss.JoinVertical(lipgloss.Left, banner, "", sub, "", form, accountHint, errLine, "", help)
 }
 
 func (m model) viewChats() string {

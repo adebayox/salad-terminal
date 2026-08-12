@@ -119,7 +119,7 @@ func Resume(chatID string) error {
 						stringField(member, "email"),
 					)
 					if name != "" {
-						members = append(members, name)
+						members = append(members, terminalSafe(name))
 					}
 				}
 			}
@@ -159,7 +159,7 @@ func ShowParticipants(chatID string) error {
 			return err
 		}
 		for _, name := range boot.Chat.MemberNames {
-			fmt.Println("-", name)
+			fmt.Println("-", terminalSafe(name))
 		}
 		return nil
 	}
@@ -170,7 +170,7 @@ func ShowParticipants(chatID string) error {
 			stringField(member, "email"),
 			stringField(member, "id"),
 		)
-		fmt.Println("-", name)
+		fmt.Println("-", terminalSafe(name))
 	}
 	return nil
 }
@@ -184,6 +184,10 @@ func ActiveChatID() (string, error) {
 }
 
 func Send(chatID, content string) error {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return fmt.Errorf("message cannot be empty")
+	}
 	client, _, err := auth.AuthedClient()
 	if err != nil {
 		return err
@@ -209,10 +213,10 @@ func Send(chatID, content string) error {
 	}
 	author := firstNonEmpty(msg.AuthorName, "you")
 	body := firstNonEmpty(msg.Body, content)
-	fmt.Printf("[%s] %s\n", author, body)
+	fmt.Printf("[%s] %s\n", terminalSafe(author), terminalSafe(body))
 
 	if reply := waitForAssistantReply(ctx, client, chatID, msg.ID, 20*time.Second); reply != nil {
-		fmt.Printf("[%s] %s\n", firstNonEmpty(reply.AuthorName, "assistant"), strings.TrimSpace(reply.Body))
+		fmt.Printf("[%s] %s\n", terminalSafe(firstNonEmpty(reply.AuthorName, "assistant")), terminalSafe(strings.TrimSpace(reply.Body)))
 	} else {
 		fmt.Println("(still waiting on assistant — open: salad resume <chat-id>)")
 	}
@@ -271,14 +275,18 @@ func printChatList(chats []api.ChatPreview) {
 	}
 	for i := 0; i < limit; i++ {
 		chat := chats[i]
-		title := firstNonEmpty(chat.Title, chat.ID)
+		title := terminalSafe(firstNonEmpty(chat.Title, chat.ID))
 		unread := ""
 		if chat.UnreadCount > 0 {
 			unread = fmt.Sprintf(" (%d unread)", chat.UnreadCount)
 		}
 		members := ""
 		if len(chat.MemberNames) > 0 {
-			members = " · " + strings.Join(chat.MemberNames, ", ")
+			safeMembers := make([]string, 0, len(chat.MemberNames))
+			for _, member := range chat.MemberNames {
+				safeMembers = append(safeMembers, terminalSafe(member))
+			}
+			members = " · " + strings.Join(safeMembers, ", ")
 		}
 		fmt.Printf("%2d. %s%s%s\n", i+1, title, unread, members)
 	}
@@ -297,9 +305,54 @@ func printRecent(messages []api.ChatMessage, limit int) {
 		start = len(messages) - limit
 	}
 	for _, msg := range messages[start:] {
-		author := firstNonEmpty(msg.AuthorName, msg.Role, "unknown")
-		fmt.Printf("[%s] %s\n", author, strings.TrimSpace(msg.Body))
+		author := terminalSafe(firstNonEmpty(msg.AuthorName, msg.Role, "unknown"))
+		fmt.Printf("[%s] %s\n", author, terminalSafe(strings.TrimSpace(msg.Body)))
 	}
+}
+
+// terminalSafe prevents remote chat content from changing the user's terminal
+// title, cursor, colours, or command line. Newlines and tabs remain readable.
+func terminalSafe(value string) string {
+	var out strings.Builder
+	for i := 0; i < len(value); {
+		if value[i] == 0x1b {
+			i++
+			if i < len(value) && value[i] == ']' { // OSC, including terminal title changes.
+				i++
+				for i < len(value) {
+					if value[i] == 0x07 {
+						i++
+						break
+					}
+					if value[i] == 0x1b && i+1 < len(value) && value[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+				continue
+			}
+			if i < len(value) && value[i] == '[' { // CSI, including ANSI colours.
+				i++
+				for i < len(value) {
+					ch := value[i]
+					i++
+					if ch >= 0x40 && ch <= 0x7e {
+						break
+					}
+				}
+				continue
+			}
+			continue
+		}
+		if value[i] < 0x20 && value[i] != '\n' && value[i] != '\t' || value[i] == 0x7f {
+			i++
+			continue
+		}
+		out.WriteByte(value[i])
+		i++
+	}
+	return out.String()
 }
 
 func stringField(m map[string]any, key string) string {

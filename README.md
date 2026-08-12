@@ -18,7 +18,7 @@ system and CPU. It checks the SHA-256 checksum before it installs the binary.
 To install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.4 bash
+curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.5 bash
 ```
 
 ### Windows
@@ -41,14 +41,19 @@ salad
 
 Run `salad` from the repository that you want to work on. On first launch,
 choose Google sign-in or enter your email and password. If you do not have an
-account, choose account creation in the browser. Return to the terminal when
-sign-in is complete.
+account, run `salad signup`; the browser opens the account creation flow.
+Verify your email if asked, then run `salad login`.
+
+If you forget your password, run `salad recover`. The browser opens the reset
+flow. Finish it there, then run `salad login`.
 
 You can also start sign-in directly:
 
 ```bash
 salad login --google
 salad login
+salad signup
+salad recover
 ```
 
 Set `SALAD_API_URL=https://api-staging.salad.ink` only when testing staging.

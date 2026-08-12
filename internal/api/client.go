@@ -187,7 +187,7 @@ func HumanizeError(err error) string {
 		if apiErr.Status >= 500 {
 			return "Salad is temporarily unavailable. Try again in a moment."
 		}
-		if message := strings.TrimSpace(apiErr.Message); message != "" {
+		if message := safeAPIMessage(apiErr.Message); message != "" {
 			return message
 		}
 		return "Salad could not complete that request. Try again."
@@ -209,6 +209,14 @@ func HumanizeError(err error) string {
 	}
 	if strings.Contains(message, "workspace not trusted") {
 		return "This repository is not trusted yet. Run `salad workspace trust` in the repository first."
+	}
+	return message
+}
+
+func safeAPIMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" || len(message) > 240 || strings.HasPrefix(message, "{") || strings.HasPrefix(message, "[") {
+		return ""
 	}
 	return message
 }
@@ -417,13 +425,27 @@ func (c *Client) Me(ctx context.Context) (*User, error) {
 	if wrapped.User.ID != "" || wrapped.User.Email != "" {
 		return &wrapped.User, nil
 	}
-	return &wrapped.Me, nil
+	if wrapped.Me.ID != "" || wrapped.Me.Email != "" {
+		return &wrapped.Me, nil
+	}
+	return nil, fmt.Errorf("sign-in response did not contain an account")
 }
 
 // Probe checks the public readiness endpoint without requiring authentication.
 func (c *Client) Probe(ctx context.Context) error {
 	_, err := c.do(ctx, http.MethodGet, "/health/ready", nil)
 	return err
+}
+
+func escapedPathSegment(label, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", label)
+	}
+	if strings.ContainsAny(value, "/?#") {
+		return "", fmt.Errorf("invalid %s", label)
+	}
+	return url.PathEscape(value), nil
 }
 
 func (c *Client) Bootstrap(ctx context.Context) (*BootstrapResponse, error) {
@@ -433,7 +455,11 @@ func (c *Client) Bootstrap(ctx context.Context) (*BootstrapResponse, error) {
 }
 
 func (c *Client) ChatBootstrap(ctx context.Context, chatID string) (*ChatBootstrapResponse, error) {
-	payload, err := c.do(ctx, http.MethodGet, "/api/mobile/chats/"+chatID+"/bootstrap", nil)
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := c.do(ctx, http.MethodGet, "/api/mobile/chats/"+escapedChatID+"/bootstrap", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -463,10 +489,15 @@ func (c *Client) ChatBootstrap(ctx context.Context, chatID string) (*ChatBootstr
 // ListMessages fetches chat history (newest page, chronological).
 // limit defaults to 100 (API max). beforeMessageID loads older messages.
 func (c *Client) ListMessages(ctx context.Context, chatID string, beforeMessageID string) ([]ChatMessage, error) {
-	path := fmt.Sprintf("/api/chats/%s/messages?limit=100", chatID)
-	if before := strings.TrimSpace(beforeMessageID); before != "" {
-		path += "&before=" + before
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return nil, err
 	}
+	query := url.Values{"limit": {"100"}}
+	if before := strings.TrimSpace(beforeMessageID); before != "" {
+		query.Set("before", before)
+	}
+	path := "/api/chats/" + escapedChatID + "/messages?" + query.Encode()
 	payload, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -479,10 +510,14 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string) (*Chat
 }
 
 func (c *Client) SendMessageRequest(ctx context.Context, chatID string, req SendMessageRequest) (*ChatMessage, error) {
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return nil, err
+	}
 	if req.ClientMessageID == "" {
 		req.ClientMessageID = fmt.Sprintf("term-%d", time.Now().UnixNano())
 	}
-	payload, err := c.do(ctx, http.MethodPost, "/api/chats/"+chatID+"/messages", req)
+	payload, err := c.do(ctx, http.MethodPost, "/api/chats/"+escapedChatID+"/messages", req)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +549,11 @@ func (c *Client) PostToolResult(ctx context.Context, req ToolResultRequest) erro
 }
 
 func (c *Client) ListMembers(ctx context.Context, chatID string) ([]map[string]any, error) {
-	payload, err := c.do(ctx, http.MethodGet, "/api/chats/"+chatID+"/members", nil)
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := c.do(ctx, http.MethodGet, "/api/chats/"+escapedChatID+"/members", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -558,10 +597,14 @@ func (c *Client) ListAIProducts(ctx context.Context) ([]AIProduct, error) {
 // AddAIMember adds an AI to an existing Salad chat (same as web Add Member).
 func (c *Client) AddAIMember(ctx context.Context, chatID, productSlug string) error {
 	productSlug = strings.TrimSpace(productSlug)
-	if chatID == "" || productSlug == "" {
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return err
+	}
+	if productSlug == "" {
 		return fmt.Errorf("chat id and ai product slug required")
 	}
-	_, err := c.do(ctx, http.MethodPost, "/api/chats/"+chatID+"/members", map[string]any{
+	_, err = c.do(ctx, http.MethodPost, "/api/chats/"+escapedChatID+"/members", map[string]any{
 		"member_type":     "ai",
 		"ai_product_slug": productSlug,
 	})

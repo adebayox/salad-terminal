@@ -78,3 +78,34 @@ func TestClientDoesNotRetryUnauthorizedResponseTwice(t *testing.T) {
 		t.Fatalf("refreshes=%d requests=%d, want one refresh and two requests", refreshes.Load(), requests.Load())
 	}
 }
+
+func TestClientRejectsPathInjectionInChatIDs(t *testing.T) {
+	client := New("http://127.0.0.1:1", "token")
+	if _, err := client.ChatBootstrap(context.Background(), "chat/../../me"); err == nil {
+		t.Fatal("ChatBootstrap accepted a path-injection chat ID")
+	}
+	if _, err := client.ListMessages(context.Background(), "chat?token=leak", ""); err == nil {
+		t.Fatal("ListMessages accepted a query-injection chat ID")
+	}
+	if _, err := client.SendMessageRequest(context.Background(), "", SendMessageRequest{Content: "hello"}); err == nil {
+		t.Fatal("SendMessageRequest accepted an empty chat ID")
+	}
+}
+
+func TestClientEscapesMessageCursor(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chats/chat-1/messages" {
+			t.Fatalf("request path = %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("before"); got != "message&next=1" {
+			t.Fatalf("before cursor = %q", got)
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "token")
+	if _, err := client.ListMessages(context.Background(), "chat-1", "message&next=1"); err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+}

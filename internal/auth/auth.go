@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -14,7 +15,10 @@ import (
 	"golang.org/x/term"
 )
 
-const signupURL = "https://salad.ink/?auth=signup"
+const (
+	productionWebURL = "https://salad.ink"
+	stagingWebURL    = "https://staging.salad.ink"
+)
 
 // BuildVersion is stamped by the release workflow so auth telemetry identifies
 // the exact terminal build that created a session.
@@ -68,11 +72,12 @@ func LoginInteractive(baseURL string) error {
 // belongs to the web auth surface; the terminal resumes naturally after the
 // user returns and runs `salad login`.
 func OpenSignup() error {
+	webURL := webAuthURL(config.BaseURL(), "signup")
 	fmt.Println("Opening Salad account creation in your browser…")
-	if err := OpenSignupBrowser(); err != nil {
+	if err := openBrowser(webURL); err != nil {
 		fmt.Println("Could not open the browser automatically.")
 		fmt.Println("Open this URL:")
-		fmt.Println(signupURL)
+		fmt.Println(webURL)
 		return nil
 	}
 	fmt.Println("Create your account in the browser, then return here and run `salad login`.")
@@ -80,7 +85,39 @@ func OpenSignup() error {
 }
 
 func OpenSignupBrowser() error {
-	return openBrowser(signupURL)
+	return OpenSignupBrowserFor(config.BaseURL())
+}
+
+func OpenSignupBrowserFor(baseURL string) error {
+	return openBrowser(webAuthURL(baseURL, "signup"))
+}
+
+// OpenRecovery opens the password-recovery flow used by the web app.
+func OpenRecovery() error {
+	webURL := webAuthURL(config.BaseURL(), "forgot")
+	fmt.Println("Opening password recovery in your browser…")
+	if err := openBrowser(webURL); err != nil {
+		fmt.Println("Could not open the browser automatically.")
+		fmt.Println("Open this URL:")
+		fmt.Println(webURL)
+		return nil
+	}
+	fmt.Println("Finish the reset in your browser, then run `salad login`.")
+	return nil
+}
+
+func webAuthURL(baseURL, mode string) string {
+	webBase := productionWebURL
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err == nil {
+		switch strings.ToLower(parsed.Hostname()) {
+		case "api-staging.salad.ink":
+			webBase = stagingWebURL
+		case "api.salad.ink":
+			webBase = productionWebURL
+		}
+	}
+	return webBase + "/?auth=" + url.QueryEscape(mode)
 }
 
 func Login(baseURL, email, password string) error {
@@ -115,11 +152,13 @@ func Login(baseURL, email, password string) error {
 func Logout() error {
 	creds, err := config.LoadCredentials()
 	if err != nil {
-		_ = config.ClearCredentials()
+		if clearErr := config.ClearCredentials(); clearErr != nil {
+			return fmt.Errorf("could not clear local sign-in: %w", clearErr)
+		}
 		fmt.Println("Logged out.")
 		return nil
 	}
-	client := api.New(config.BaseURL(), creds.AccessToken)
+	client := api.New(creds.BaseURL, creds.AccessToken)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	_ = client.Logout(ctx, creds.RefreshToken)
@@ -144,7 +183,7 @@ func WhoAmI() error {
 	name := firstNonEmpty(user.Name, creds.Name, user.Email, creds.Email)
 	email := firstNonEmpty(user.Email, creds.Email)
 	fmt.Printf("%s <%s>\n", name, email)
-	fmt.Printf("user_id=%s base_url=%s\n", firstNonEmpty(user.ID, creds.UserID), config.BaseURL())
+	fmt.Printf("user_id=%s base_url=%s\n", firstNonEmpty(user.ID, creds.UserID), creds.BaseURL)
 	return nil
 }
 
@@ -153,9 +192,13 @@ func AuthedClient() (*api.Client, *config.Credentials, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("not logged in (run: salad login)")
 	}
-	client := api.New(config.BaseURL(), creds.AccessToken)
+	baseURL, err := authenticatedBaseURL(creds)
+	if err != nil {
+		return nil, nil, err
+	}
+	client := api.New(baseURL, creds.AccessToken)
 	client.RefreshFunc = func(ctx context.Context) error {
-		refreshClient := api.New(creds.BaseURL, "")
+		refreshClient := api.New(baseURL, "")
 		response, refreshErr := refreshClient.Refresh(ctx, creds.RefreshToken, DeviceInfo(creds.InstallID))
 		if refreshErr != nil {
 			return refreshErr
@@ -173,6 +216,18 @@ func AuthedClient() (*api.Client, *config.Credentials, error) {
 		return config.SaveCredentials(creds)
 	}
 	return client, creds, nil
+}
+
+func authenticatedBaseURL(creds *config.Credentials) (string, error) {
+	stored := strings.TrimRight(strings.TrimSpace(creds.BaseURL), "/")
+	if stored == "" {
+		return "", fmt.Errorf("saved credentials have no API environment; run `salad login` again")
+	}
+	configured := strings.TrimRight(strings.TrimSpace(os.Getenv(config.EnvBaseURL)), "/")
+	if configured != "" && !strings.EqualFold(configured, stored) {
+		return "", fmt.Errorf("SALAD_API_URL points to %s, but saved credentials belong to %s; unset SALAD_API_URL or run `salad login` for that environment", configured, stored)
+	}
+	return stored, nil
 }
 
 func displayName(creds *config.Credentials) string {

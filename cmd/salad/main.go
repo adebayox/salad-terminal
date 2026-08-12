@@ -17,6 +17,7 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/tui"
 	"github.com/salad-ai/salad-terminal/internal/update"
 	"github.com/salad-ai/salad-terminal/internal/workspace"
+	"golang.org/x/term"
 )
 
 // Version is stamped at build time (git short sha). See install.sh.
@@ -37,6 +38,9 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
+		if err := requireInteractive("salad"); err != nil {
+			return err
+		}
 		if err := ensureLatest(); err != nil {
 			return err
 		}
@@ -73,6 +77,9 @@ func run(args []string) error {
 			printCommandUsage("continue")
 			return nil
 		}
+		if err := requireInteractive("salad --continue"); err != nil {
+			return err
+		}
 		if err := ensureLatest(); err != nil {
 			return err
 		}
@@ -82,6 +89,9 @@ func run(args []string) error {
 			printCommandUsage("resume")
 			return nil
 		}
+		if err := requireInteractive("salad --resume"); err != nil {
+			return err
+		}
 		if err := ensureLatest(); err != nil {
 			return err
 		}
@@ -90,6 +100,9 @@ func run(args []string) error {
 		if hasHelp(rest) {
 			printCommandUsage("new")
 			return nil
+		}
+		if err := requireInteractive("salad new"); err != nil {
+			return err
 		}
 		if err := ensureLatest(); err != nil {
 			return err
@@ -151,6 +164,15 @@ func run(args []string) error {
 			return fmt.Errorf("signup does not take options; use `salad signup --help`")
 		}
 		return auth.OpenSignup()
+	case "recover", "reset-password":
+		if hasHelp(rest) {
+			printCommandUsage("recover")
+			return nil
+		}
+		if len(rest) != 0 {
+			return fmt.Errorf("recover does not take options; use `salad recover --help`")
+		}
+		return auth.OpenRecovery()
 	case "logout":
 		if hasHelp(rest) {
 			printCommandUsage("logout")
@@ -178,6 +200,9 @@ func run(args []string) error {
 			return chat.List()
 		}
 		if rest[0] == "pick" || rest[0] == "open" {
+			if err := requireInteractive("salad chat " + rest[0]); err != nil {
+				return err
+			}
 			return tui.RunResume()
 		}
 		if rest[0] == "participants" {
@@ -216,10 +241,18 @@ func run(args []string) error {
 			return fmt.Errorf("only one chat ID is allowed; use `salad resume --help`")
 		}
 		if chatID == "" {
+			if err := requireInteractive("salad resume"); err != nil {
+				return err
+			}
 			if err := ensureLatest(); err != nil {
 				return err
 			}
 			return tui.RunResume()
+		}
+		if !noTUI {
+			if err := requireInteractive("salad resume <chat-id>"); err != nil {
+				return err
+			}
 		}
 		if err := chat.Resume(chatID); err != nil {
 			return err
@@ -239,6 +272,9 @@ func run(args []string) error {
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: salad say <message>")
 		}
+		if strings.TrimSpace(strings.Join(rest, " ")) == "" {
+			return fmt.Errorf("message cannot be empty")
+		}
 		id, err := chat.ActiveChatID()
 		if err != nil {
 			return err
@@ -253,6 +289,13 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; run `salad --help` to see available commands", cmd)
 	}
+}
+
+func requireInteractive(command string) error {
+	if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+		return nil
+	}
+	return fmt.Errorf("%s needs an interactive terminal; use `--help` for non-interactive commands", command)
 }
 
 func hasHelp(args []string) bool {
@@ -310,6 +353,9 @@ func runWorkspace(args []string) error {
 	}
 	switch args[0] {
 	case "trust":
+		if len(args) > 2 {
+			return fmt.Errorf("usage: salad workspace trust [path]")
+		}
 		root := ""
 		if len(args) > 1 {
 			root = args[1]
@@ -324,7 +370,7 @@ func runWorkspace(args []string) error {
 		fmt.Println("Trusted", resolved)
 		return nil
 	case "read":
-		if len(args) < 2 {
+		if len(args) != 2 {
 			return fmt.Errorf("usage: salad workspace read <path>")
 		}
 		if _, err := workspace.EnsureTrusted(""); err != nil {
@@ -340,6 +386,9 @@ func runWorkspace(args []string) error {
 		}
 		return nil
 	case "git-status", "status":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: salad workspace git-status")
+		}
 		if _, err := workspace.EnsureTrusted(""); err != nil {
 			return err
 		}
@@ -350,6 +399,9 @@ func runWorkspace(args []string) error {
 		fmt.Print(out)
 		return nil
 	case "git-diff", "diff":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: salad workspace git-diff")
+		}
 		if _, err := workspace.EnsureTrusted(""); err != nil {
 			return err
 		}
@@ -360,6 +412,9 @@ func runWorkspace(args []string) error {
 		fmt.Print(out)
 		return nil
 	case "permissions":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: salad workspace permissions")
+		}
 		summary, err := workspace.PermissionsSummary("")
 		if err != nil {
 			return err
@@ -384,6 +439,7 @@ Start:
 Account:
   salad login           Sign in from the terminal or browser
   salad signup          Create an account in your browser
+  salad recover         Reset a forgotten password in your browser
   salad whoami          Show the signed-in account
   salad logout          Sign out on this computer
 
@@ -424,6 +480,9 @@ Examples:
 	case "signup":
 		fmt.Println("Usage: salad signup")
 		fmt.Println("Opens Salad account creation in your browser.")
+	case "recover":
+		fmt.Println("Usage: salad recover")
+		fmt.Println("Opens Salad password recovery in your browser.")
 	case "chat":
 		fmt.Print(`Usage: salad chat [participants <chat-id>]
 
