@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	// Staging until Terminal collaboration matrix passes (see TERMINAL_CONTRACT.md).
-	DefaultBaseURL = "https://api-staging.salad.ink"
+	// Public releases use production. Set SALAD_API_URL for staging QA.
+	DefaultBaseURL = "https://api.salad.ink"
 	EnvBaseURL     = "SALAD_API_URL"
 	EnvConfigDir   = "SALAD_CONFIG_DIR"
 	keyringService = "salad-terminal"
