@@ -44,6 +44,8 @@ salad
 Run `salad` from the repository that you want to work on. The first command
 opens sign-in. The second command opens a new Salad chat.
 
+If you do not have a Salad account, [create one in the Salad staging web app](https://staging.salad.ink/?auth=signup) first. Verify your email if Salad asks you to, then run `salad login` again. The CLI does not create accounts. An unknown email or wrong password returns an invalid-credentials error; repeated failed attempts can trigger the normal login rate limit. The current release uses staging until the production API rollout is complete.
+
 You can also use Google sign-in:
 
 ```bash
