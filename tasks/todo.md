@@ -57,3 +57,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [ ] Allowlist loopback redirect URI on Google OAuth client; live-verify `--google`
 - [ ] Token-stream UI for `stream_chunk` events
 - [ ] Production API default after soak
+
+## CLI public release (2026-08-12)
+
+- [x] Local release gates: gofmt, go vet, unit tests, and six cross-compiled targets.
+- [x] Published `v0.2.0` with macOS, Linux, and Windows amd64/arm64 archives, `VERSION`, `SHA256SUMS`, and `release-manifest.json`.
+- [x] Verified all six public archive checksums and archive contents; Unix installer exercised against the public release.
+- [x] Fixed release workflow checkout and manifest generation; added manifest validation so empty names or malformed hashes fail the publish job.
+- [ ] Re-upload corrected `release-manifest.json` for the already-published `v0.2.0` release after the workflow fix is committed.

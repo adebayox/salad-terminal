@@ -130,12 +130,17 @@ jobs:
           (cd dist && sha256sum salad-*.* > SHA256SUMS)
           printf '{"version":"%s","artifacts":[' "$version" > dist/release-manifest.json
           first=1
-          while read -r hash _ name; do
+          while read -r hash name; do
             [[ "$first" == 1 ]] || printf ',' >> dist/release-manifest.json
             first=0
             printf '{"name":"%s","sha256":"%s"}' "$name" "$hash" >> dist/release-manifest.json
           done < dist/SHA256SUMS
           printf ']}\n' >> dist/release-manifest.json
+          jq -e --arg version "$version" '
+            .version == $version
+            and (.artifacts | length == 6)
+            and all(.artifacts[]; (.name | length > 0) and (.sha256 | test("^[0-9a-f]{64}$")))
+          ' dist/release-manifest.json >/dev/null
 
       - name: Publish immutable release
         env:
