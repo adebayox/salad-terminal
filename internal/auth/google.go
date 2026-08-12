@@ -101,7 +101,14 @@ func LoginGoogleBrowser(baseURL string) error {
 <h2>∬alad Terminal</h2><p>Signed in. You can close this tab and return to the terminal.</p></body></html>`))
 		codeCh <- code
 	})
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       10 * time.Second,
+		MaxHeaderBytes:    32 << 10,
+	}
 	go func() { _ = srv.Serve(ln) }()
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
