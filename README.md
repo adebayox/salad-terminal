@@ -19,7 +19,7 @@ system and CPU. It checks the SHA-256 checksum before it installs the binary.
 To install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.0 bash
+curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.1 bash
 ```
 
 ### Windows
