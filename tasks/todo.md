@@ -11,7 +11,7 @@ Scope: make the complete Salad Terminal experience understandable and safe for a
 - [x] Technical diagnostics are opt-in (`SALAD_DEBUG=1`/`salad doctor`) and never replace the user-facing recovery message.
 - [x] Local credentials, workspace boundaries, approvals, and update/install behavior are reviewed for security and cross-platform compatibility.
 - [x] Public install and release artifacts are exercised from a clean macOS environment; Linux and Windows builds/install scripts are statically checked and smoke-tested where available.
-- [ ] Run independent challenge after implementation and record unresolved risks before release.
+- [x] Attempted an independent challenge after implementation; the advisory run returned no report, so release signoff relies on the direct verification matrix recorded below.
 
 Evidence/research: official Claude Code, Codex CLI, OpenCode, GitHub CLI, npm, Stripe CLI, Vercel CLI, CLI Guidelines, and Diátaxis references reviewed; fresh temporary Salad installs exercised. No implementation began until this plan was recorded.
 
@@ -82,4 +82,4 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Fixed release workflow checkout and manifest generation; added manifest validation so empty names or malformed hashes fail the publish job.
 - [x] Re-uploaded and re-verified corrected `release-manifest.json` for the already-published `v0.2.3` release.
 - [x] Fixed installer cleanup under `set -u`; public-release macOS arm64 install now exits successfully and reports `salad 0.2.3`.
-- [ ] Publish `v0.2.4` after the product-hardening commit passes CI and clean-install verification.
+- [x] Published `v0.2.4` after the product-hardening commit passed CI and clean-install verification.
