@@ -41,7 +41,7 @@ try {
     [Environment]::SetEnvironmentVariable('Path', (($userPath.TrimEnd(';') + ';' + $binDir).Trim(';')), 'User')
   }
   Write-Host "Installed: $binDir\salad.exe"
-  Write-Host 'Open a new PowerShell window, then run: salad login'
+  Write-Host 'Open a new PowerShell window, then run: salad login --google'
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

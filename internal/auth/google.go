@@ -3,13 +3,12 @@ package auth
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -20,27 +19,16 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/config"
 )
 
-// Staging FE Google client ID (public). Override with SALAD_GOOGLE_CLIENT_ID.
-const defaultGoogleClientID = "946937090982-cg1os1brpv4cidt8r37qkeudr546gnu3.apps.googleusercontent.com"
-
-func googleClientID() string {
-	if v := strings.TrimSpace(os.Getenv("SALAD_GOOGLE_CLIENT_ID")); v != "" {
-		return v
-	}
-	return defaultGoogleClientID
-}
-
 func randomB64(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-func codeChallenge(verifier string) string {
-	sum := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b), nil
 }
 
 func openBrowser(rawURL string) error {
@@ -56,17 +44,42 @@ func openBrowser(rawURL string) error {
 	return cmd.Start()
 }
 
-// LoginGoogleBrowser runs PKCE loopback Google OAuth, then exchanges via Salad mobile auth.
+type browserCallbackPayload struct {
+	State string `json:"state"`
+	Token string `json:"token"`
+	Error string `json:"error"`
+}
+
+const browserCallbackHTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Salad Terminal</title></head>
+<body style="font-family:system-ui;padding:2rem;background:#fbfbfa;color:#202123">
+<h2>Salad Terminal</h2><p id="message">Completing sign-in…</p>
+<script>
+(async () => {
+  const query = new URLSearchParams(window.location.search)
+  const hash = new URLSearchParams(window.location.hash.slice(1))
+  const response = await fetch('/callback', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({state: query.get('state'), token: hash.get('token'), error: hash.get('error')})
+  })
+  if (!response.ok) throw new Error('The terminal could not finish sign-in.')
+  document.getElementById('message').textContent = hash.get('error')
+    ? 'Sign-in failed. You can close this tab and return to the terminal.'
+    : 'Signed in. You can close this tab and return to the terminal.'
+})().catch((error) => {
+  document.getElementById('message').textContent = error.message
+})
+</script></body></html>`
+
+// LoginGoogleBrowser uses Salad's web OAuth callback, then exchanges the
+// short-lived web session for a terminal session. This keeps Google redirect
+// configuration on the backend and preserves terminal device telemetry.
 func LoginGoogleBrowser(baseURL string) error {
-	verifier, err := randomB64(32)
+	state, err := randomB64(32)
 	if err != nil {
 		return err
 	}
-	state, err := randomB64(16)
-	if err != nil {
-		return err
-	}
-	challenge := codeChallenge(verifier)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -74,33 +87,53 @@ func LoginGoogleBrowser(baseURL string) error {
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
-	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback?state=%s", port, url.QueryEscape(state))
 
-	codeCh := make(chan string, 1)
+	tokenCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("state") != state {
+		if r.Method == http.MethodGet {
+			if r.URL.Query().Get("state") != state {
+				http.Error(w, "state mismatch", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(w, browserCallbackHTML)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var payload browserCallbackPayload
+		if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&payload); err != nil {
+			http.Error(w, "invalid callback", http.StatusBadRequest)
+			return
+		}
+		if payload.State != state {
 			http.Error(w, "state mismatch", http.StatusBadRequest)
-			errCh <- fmt.Errorf("oauth state mismatch")
 			return
 		}
-		if msg := r.URL.Query().Get("error"); msg != "" {
-			http.Error(w, msg, http.StatusBadRequest)
-			errCh <- fmt.Errorf("google oauth: %s", msg)
+		if payload.Error != "" {
+			select {
+			case errCh <- fmt.Errorf("browser sign-in: %s", payload.Error):
+			default:
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			http.Error(w, "missing code", http.StatusBadRequest)
-			errCh <- fmt.Errorf("missing oauth code")
+		if payload.Token == "" {
+			http.Error(w, "missing sign-in token", http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!doctype html><html><body style="font-family:system-ui;padding:2rem;background:#fbfbfa;color:#202123">
-<h2>∬alad Terminal</h2><p>Signed in. You can close this tab and return to the terminal.</p></body></html>`))
-		codeCh <- code
+		select {
+		case tokenCh <- payload.Token:
+		default:
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
+
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -116,48 +149,40 @@ func LoginGoogleBrowser(baseURL string) error {
 		_ = srv.Shutdown(ctx)
 	}()
 
-	authURL := url.URL{
-		Scheme: "https",
-		Host:   "accounts.google.com",
-		Path:   "/o/oauth2/v2/auth",
+	authURL, err := url.Parse(strings.TrimRight(baseURL, "/") + "/api/auth/google")
+	if err != nil {
+		return fmt.Errorf("invalid Salad API URL: %w", err)
 	}
-	q := authURL.Query()
-	q.Set("client_id", googleClientID())
-	q.Set("redirect_uri", redirectURI)
-	q.Set("response_type", "code")
-	q.Set("scope", "openid email profile")
-	q.Set("access_type", "online")
-	q.Set("prompt", "select_account")
-	q.Set("state", state)
-	q.Set("code_challenge", challenge)
-	q.Set("code_challenge_method", "S256")
-	authURL.RawQuery = q.Encode()
+	query := authURL.Query()
+	query.Set("desktop_redirect_uri", redirectURI)
+	authURL.RawQuery = query.Encode()
 
-	fmt.Println("Opening Google sign-in in your browser…")
+	fmt.Println("Opening Salad sign-in in your browser…")
 	fmt.Println(authURL.String())
 	if err := openBrowser(authURL.String()); err != nil {
 		fmt.Println("Could not open browser automatically. Open the URL above.")
 	}
 
-	var code string
+	var webToken string
 	select {
-	case code = <-codeCh:
+	case webToken = <-tokenCh:
 	case err := <-errCh:
 		return err
 	case <-time.After(3 * time.Minute):
-		return fmt.Errorf("timed out waiting for Google sign-in")
+		return fmt.Errorf("timed out waiting for browser sign-in")
 	}
 
 	installID := uuid.NewString()
 	if existing, err := config.LoadCredentials(); err == nil && existing.InstallID != "" {
 		installID = existing.InstallID
 	}
-	client := api.New(baseURL, "")
+	device := DeviceInfo(installID)
+	client := api.New(baseURL, webToken)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	resp, err := client.LoginGoogle(ctx, code, verifier, redirectURI, DeviceInfo(installID))
+	resp, err := client.ExchangeMobileSession(ctx, device)
 	if err != nil {
-		return fmt.Errorf("%w\nHint: add %s as an Authorized redirect URI on the Google OAuth client, or use email login", err, redirectURI)
+		return fmt.Errorf("finish browser sign-in: %w", err)
 	}
 	creds := &config.Credentials{
 		AccessToken:  resp.Session.AccessToken,
