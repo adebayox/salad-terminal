@@ -1,5 +1,11 @@
 # Workspace tools harness (aligned with Salad CTO plan, 2026-07-20)
 
+## Follow-up release blocker — account creation keyboard path
+
+- [x] Reproduce the documented `c` action from the initial sign-in screen; it incorrectly entered `c` into the email field.
+- [x] Replace the conflicting hidden shortcut with a visible, keyboard-selectable account-creation action.
+- [x] Verify email input still accepts `c`, account creation is the fourth focusable action, and Google/email paths remain intact.
+
 ## CLI product hardening — 2026-08-12
 
 Scope: make the complete Salad Terminal experience understandable and safe for a first-time engineer, without changing the existing chat/tool architecture unless verification shows a real product defect.
@@ -10,10 +16,27 @@ Scope: make the complete Salad Terminal experience understandable and safe for a
 - [x] Auth/session/chat/resume/say/workspace/update flows have good, bad, offline, empty, stale, and non-interactive coverage.
 - [x] Technical diagnostics are opt-in (`SALAD_DEBUG=1`/`salad doctor`) and never replace the user-facing recovery message.
 - [x] Local credentials, workspace boundaries, approvals, and update/install behavior are reviewed for security and cross-platform compatibility.
+- [x] Non-interactive TUI commands fail before network or prompt work with an actionable terminal requirement; chat IDs and message cursors are validated/escaped before API requests.
 - [x] Public install and release artifacts are exercised from a clean macOS environment; Linux and Windows builds/install scripts are statically checked and smoke-tested where available.
 - [x] Attempted an independent challenge after implementation; the advisory run returned no report, so release signoff relies on the direct verification matrix recorded below.
 
 Evidence/research: official Claude Code, Codex CLI, OpenCode, GitHub CLI, npm, Stripe CLI, Vercel CLI, CLI Guidelines, and Diátaxis references reviewed; fresh temporary Salad installs exercised. No implementation began until this plan was recorded.
+
+## Release re-audit — 2026-08-12
+
+- [x] Removed the legacy `.salad-trust` bypass; an in-repository marker no longer grants local tool access.
+- [x] Bound every realtime `tool_request` to the active room and the current workspace opaque ID; mismatches fail closed before execution.
+- [x] Moved CLI WebSocket authentication to the `Authorization` header; tokens are no longer sent in the URL or subprotocol.
+- [x] Added visible WebSocket disconnect state and bounded reconnect attempts while polling remains the data fallback.
+- [x] Rejected staging/production credential mixing when `SALAD_API_URL` conflicts with the saved session environment.
+- [x] Added atomic local metadata writes and rollback for partial keyring/plaintext migration failures.
+- [x] Sanitized remote titles, participants, and messages before printing in headless commands so ANSI/OSC control sequences cannot control the terminal.
+- [x] Surfaced local continue-state persistence failures and partial AI-member additions instead of silently presenting success.
+- [x] Added strict workspace subcommand argument validation and a browser password-recovery command.
+- [x] Confirmed Excalidraw is an active whiteboard dependency (`SaladCanvas.jsx`), retained it, and removed the current high audit finding with a root `brace-expansion` override; `npm audit` now reports zero vulnerabilities.
+- [x] Fixed packaged Electron API resolution: the private `salad-app://` origin now defaults to production instead of inheriting the local `.env` API, and desktop release builds explicitly use production API/WebSocket/PostHog settings.
+
+Remaining work: final CLI test/build/PTY matrix, staging verification, then superseding public release and developer-page/browser signoff.
 
 Implementation evidence: visible first-run PTY flow, clean-binary command matrix, live staging QA login/whoami/chat/resume/participants/workspace checks, unknown-chat recovery, room open/exit, production API doctor probe, local Go tests including race detection, vet, shell syntax check, and cross-target build attempts. Remaining release work is final review, release artifact verification, and independent challenge.
 

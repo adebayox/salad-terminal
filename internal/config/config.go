@@ -136,16 +136,21 @@ func LoadCredentials() (*Credentials, error) {
 	// Migrate the legacy plaintext file only after both secrets are safely
 	// written to the OS credential store.
 	if creds.AccessToken != "" && creds.RefreshToken != "" {
-		if err := keyring.Set(keyringService, credentialKey(baseURL, "access_token"), creds.AccessToken); err != nil {
+		accessKey := credentialKey(baseURL, "access_token")
+		refreshKey := credentialKey(baseURL, "refresh_token")
+		if err := keyring.Set(keyringService, accessKey, creds.AccessToken); err != nil {
 			return nil, fmt.Errorf("secure credential store unavailable: %w", err)
 		}
-		if err := keyring.Set(keyringService, credentialKey(baseURL, "refresh_token"), creds.RefreshToken); err != nil {
+		if err := keyring.Set(keyringService, refreshKey, creds.RefreshToken); err != nil {
+			_ = keyring.Delete(keyringService, accessKey)
 			return nil, fmt.Errorf("secure credential store unavailable: %w", err)
 		}
 		metadata := *creds
 		metadata.AccessToken = ""
 		metadata.RefreshToken = ""
 		if err := writeCredentialsFile(path, &metadata); err != nil {
+			_ = keyring.Delete(keyringService, accessKey)
+			_ = keyring.Delete(keyringService, refreshKey)
 			return nil, fmt.Errorf("migrate credentials file: %w", err)
 		}
 		return creds, nil
@@ -161,36 +166,48 @@ func SaveCredentials(creds *Credentials) error {
 	if creds == nil || strings.TrimSpace(creds.BaseURL) == "" || creds.AccessToken == "" || creds.RefreshToken == "" {
 		return errors.New("access and refresh tokens plus base URL are required")
 	}
-	if err := keyring.Set(keyringService, credentialKey(creds.BaseURL, "access_token"), creds.AccessToken); err != nil {
+	accessKey := credentialKey(creds.BaseURL, "access_token")
+	refreshKey := credentialKey(creds.BaseURL, "refresh_token")
+	previousAccess, previousAccessErr := keyring.Get(keyringService, accessKey)
+	previousRefresh, previousRefreshErr := keyring.Get(keyringService, refreshKey)
+	restore := func() {
+		if previousAccessErr == nil {
+			_ = keyring.Set(keyringService, accessKey, previousAccess)
+		} else {
+			_ = keyring.Delete(keyringService, accessKey)
+		}
+		if previousRefreshErr == nil {
+			_ = keyring.Set(keyringService, refreshKey, previousRefresh)
+		} else {
+			_ = keyring.Delete(keyringService, refreshKey)
+		}
+	}
+	if err := keyring.Set(keyringService, accessKey, creds.AccessToken); err != nil {
 		return fmt.Errorf("secure credential store unavailable: %w", err)
 	}
-	if err := keyring.Set(keyringService, credentialKey(creds.BaseURL, "refresh_token"), creds.RefreshToken); err != nil {
-		_ = keyring.Delete(keyringService, credentialKey(creds.BaseURL, "access_token"))
+	if err := keyring.Set(keyringService, refreshKey, creds.RefreshToken); err != nil {
+		restore()
 		return fmt.Errorf("secure credential store unavailable: %w", err)
-	}
-	rollback := func() {
-		_ = keyring.Delete(keyringService, credentialKey(creds.BaseURL, "access_token"))
-		_ = keyring.Delete(keyringService, credentialKey(creds.BaseURL, "refresh_token"))
 	}
 	metadata := *creds
 	metadata.AccessToken = ""
 	metadata.RefreshToken = ""
 	dir, err := Dir()
 	if err != nil {
-		rollback()
+		restore()
 		return err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		rollback()
+		restore()
 		return err
 	}
 	path, err := credentialsPath()
 	if err != nil {
-		rollback()
+		restore()
 		return err
 	}
 	if err := writeCredentialsFile(path, &metadata); err != nil {
-		rollback()
+		restore()
 		return err
 	}
 	return nil
@@ -201,7 +218,44 @@ func writeCredentialsFile(path string, creds *Credentials) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	return writeFileAtomically(path, data, 0o600)
+}
+
+func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".salad-config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		// Windows does not replace an existing file with Rename. Removing the
+		// old metadata is safe here because the complete new file is already
+		// durable in the same directory.
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+			return err
+		}
+		if retryErr := os.Rename(tmpPath, path); retryErr != nil {
+			return retryErr
+		}
+	}
+	return nil
 }
 
 func ClearCredentials() error {
@@ -271,7 +325,7 @@ func SaveActiveChat(active *ActiveChat) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	return writeFileAtomically(path, data, 0o600)
 }
 
 func workspaceBindingsPath() (string, error) {
@@ -323,7 +377,7 @@ func SaveWorkspaceBindings(bindings WorkspaceBindings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	return writeFileAtomically(path, data, 0o600)
 }
 
 // BindWorkspace remembers which Salad chat belongs to this local folder (for `salad` continue).
