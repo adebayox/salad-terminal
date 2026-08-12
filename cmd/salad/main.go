@@ -295,6 +295,6 @@ same Salad chats, in your repo  (%s)
 Install (no Go): curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | bash
 On new-chat entry: 1-3 open recent · c continue · r previous · enter start
 In a chat: @ mention · /add · /new · /resume · esc · q
-Default API: staging (https://api-staging.salad.ink)
+Default API: production (https://api.salad.ink)
 `, Version)
 }
