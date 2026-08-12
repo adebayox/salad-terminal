@@ -14,6 +14,8 @@ import (
 	"golang.org/x/term"
 )
 
+const signupURL = "https://salad.ink/?auth=signup"
+
 // BuildVersion is stamped by the release workflow so auth telemetry identifies
 // the exact terminal build that created a session.
 var BuildVersion = "dev"
@@ -39,24 +41,46 @@ func DeviceInfo(installID string) api.DeviceInfo {
 }
 
 func LoginInteractive(baseURL string) error {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("interactive sign-in needs a terminal; run `salad login --google` or pass `--email` and `--password`")
+	}
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Email: ")
+	fmt.Print("Email address: ")
 	email, err := reader.ReadString('\n')
 	if err != nil {
-		return err
+		return fmt.Errorf("could not read your email address: %w", err)
 	}
 	email = strings.TrimSpace(email)
-	fmt.Print("Password: ")
+	fmt.Print("Password (hidden): ")
 	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	if err != nil {
-		return err
+		return fmt.Errorf("could not read your password: %w", err)
 	}
 	password := string(passwordBytes)
 	if email == "" || password == "" {
-		return fmt.Errorf("email and password are required")
+		return fmt.Errorf("email address and password are required")
 	}
 	return Login(baseURL, email, password)
+}
+
+// OpenSignup starts account creation in the user's browser. Account creation
+// belongs to the web auth surface; the terminal resumes naturally after the
+// user returns and runs `salad login`.
+func OpenSignup() error {
+	fmt.Println("Opening Salad account creation in your browser…")
+	if err := OpenSignupBrowser(); err != nil {
+		fmt.Println("Could not open the browser automatically.")
+		fmt.Println("Open this URL:")
+		fmt.Println(signupURL)
+		return nil
+	}
+	fmt.Println("Create your account in the browser, then return here and run `salad login`.")
+	return nil
+}
+
+func OpenSignupBrowser() error {
+	return openBrowser(signupURL)
 }
 
 func Login(baseURL, email, password string) error {
@@ -69,7 +93,7 @@ func Login(baseURL, email, password string) error {
 	defer cancel()
 	resp, err := client.Login(ctx, email, password, DeviceInfo(installID))
 	if err != nil {
-		return fmt.Errorf("%w\nHint: for staging use SALAD_API_URL=https://api-staging.salad.ink", err)
+		return err
 	}
 	creds := &config.Credentials{
 		AccessToken:  resp.Session.AccessToken,

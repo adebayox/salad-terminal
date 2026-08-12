@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -147,6 +150,67 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("%s (%d): %s", e.Code, e.Status, e.Message)
 	}
 	return fmt.Sprintf("http %d: %s", e.Status, e.Message)
+}
+
+// HumanizeError turns transport and API failures into a message suitable for
+// a person at a terminal. The wire status and Salad error code remain
+// available through --debug; they are not useful as the primary UX.
+func HumanizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Code {
+		case "AUTH_INVALID_CREDENTIALS":
+			return "The email or password is not correct. Check it and try again."
+		case "AUTH_TOKEN_REQUIRED", "TOKEN_INVALID", "AUTH_TOKEN_INVALID":
+			return "Your Salad sign-in has expired. Run `salad login` to sign in again."
+		case "AUTH_RATE_LIMITED", "RATE_LIMITED":
+			return "Too many sign-in attempts. Wait a few minutes, then try again."
+		case "CHAT_NOT_FOUND", "NOT_FOUND":
+			return "That chat was not found or you no longer have access to it."
+		case "FORBIDDEN", "AUTH_FORBIDDEN":
+			return "You do not have permission to do that."
+		case "AUTH_INVALID_REQUEST_BODY":
+			return "Salad could not understand that sign-in request. Update Salad Terminal and try again."
+		}
+		if apiErr.Status == http.StatusTooManyRequests {
+			return "Salad is receiving too many requests. Wait a moment, then try again."
+		}
+		if apiErr.Status == http.StatusUnauthorized {
+			return "Your Salad sign-in is not valid. Run `salad login` and try again."
+		}
+		if apiErr.Status == http.StatusForbidden {
+			return "You do not have permission to do that."
+		}
+		if apiErr.Status >= 500 {
+			return "Salad is temporarily unavailable. Try again in a moment."
+		}
+		if message := strings.TrimSpace(apiErr.Message); message != "" {
+			return message
+		}
+		return "Salad could not complete that request. Try again."
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "Salad took too long to respond. Check your connection and try again."
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return "Could not reach Salad. Check your internet connection and try again."
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return "Could not reach Salad. Check your internet connection and try again."
+	}
+	message := strings.TrimSpace(err.Error())
+	if strings.Contains(message, "secure credential store unavailable") {
+		return "Could not save your sign-in securely. Unlock your system credential store and try again."
+	}
+	if strings.Contains(message, "workspace not trusted") {
+		return "This repository is not trusted yet. Run `salad workspace trust` in the repository first."
+	}
+	return message
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte, error) {
@@ -354,6 +418,12 @@ func (c *Client) Me(ctx context.Context) (*User, error) {
 		return &wrapped.User, nil
 	}
 	return &wrapped.Me, nil
+}
+
+// Probe checks the public readiness endpoint without requiring authentication.
+func (c *Client) Probe(ctx context.Context) error {
+	_, err := c.do(ctx, http.MethodGet, "/health/ready", nil)
+	return err
 }
 
 func (c *Client) Bootstrap(ctx context.Context) (*BootstrapResponse, error) {

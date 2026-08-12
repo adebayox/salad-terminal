@@ -53,7 +53,7 @@ type browserCallbackPayload struct {
 const browserCallbackHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Salad Terminal</title></head>
 <body style="font-family:system-ui;padding:2rem;background:#fbfbfa;color:#202123">
-<h2>Salad Terminal</h2><p id="message">Completing sign-in…</p>
+<h2>Salad Terminal</h2><p id="message">Finishing sign-in…</p>
 <script>
 (async () => {
   const query = new URLSearchParams(window.location.search)
@@ -65,8 +65,8 @@ const browserCallbackHTML = `<!doctype html>
   })
   if (!response.ok) throw new Error('The terminal could not finish sign-in.')
   document.getElementById('message').textContent = hash.get('error')
-    ? 'Sign-in failed. You can close this tab and return to the terminal.'
-    : 'Signed in. You can close this tab and return to the terminal.'
+    ? 'Sign-in was not completed. You can close this tab and return to the terminal.'
+    : 'Browser sign-in complete. Return to the terminal.'
 })().catch((error) => {
   document.getElementById('message').textContent = error.message
 })
@@ -117,7 +117,7 @@ func LoginGoogleBrowser(baseURL string) error {
 		}
 		if payload.Error != "" {
 			select {
-			case errCh <- fmt.Errorf("browser sign-in: %s", payload.Error):
+			case errCh <- fmt.Errorf("browser sign-in: %s", humanGoogleError(payload.Error)):
 			default:
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -169,7 +169,7 @@ func LoginGoogleBrowser(baseURL string) error {
 	case err := <-errCh:
 		return err
 	case <-time.After(3 * time.Minute):
-		return fmt.Errorf("timed out waiting for browser sign-in")
+		return fmt.Errorf("browser sign-in timed out; run `salad` and try again")
 	}
 
 	installID := uuid.NewString()
@@ -199,4 +199,17 @@ func LoginGoogleBrowser(baseURL string) error {
 	}
 	fmt.Printf("Logged in as %s\n", displayName(creds))
 	return nil
+}
+
+func humanGoogleError(code string) string {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "access_denied":
+		return "you cancelled sign-in"
+	case "redirect_uri_mismatch":
+		return "this Salad environment is not configured for terminal sign-in"
+	case "temporarily_unavailable":
+		return "Google is temporarily unavailable"
+	default:
+		return "Google could not complete sign-in"
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/salad-ai/salad-terminal/internal/config"
+	"golang.org/x/term"
 )
 
 const trustFileName = ".salad-trust"
@@ -141,6 +142,9 @@ func EnsureTrusted(root string) (string, error) {
 	}
 	if IsTrusted(root) {
 		return root, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("this repository is not trusted; run `salad workspace trust` in a terminal first")
 	}
 	fmt.Printf("Trust this workspace for local Salad tools?\n  %s\n[y/N] ", root)
 	reader := bufio.NewReader(os.Stdin)
