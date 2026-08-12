@@ -64,4 +64,5 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Published `v0.2.0` with macOS, Linux, and Windows amd64/arm64 archives, `VERSION`, `SHA256SUMS`, and `release-manifest.json`.
 - [x] Verified all six public archive checksums and archive contents; Unix installer exercised against the public release.
 - [x] Fixed release workflow checkout and manifest generation; added manifest validation so empty names or malformed hashes fail the publish job.
-- [ ] Re-upload corrected `release-manifest.json` for the already-published `v0.2.0` release after the workflow fix is committed.
+- [x] Re-uploaded and re-verified corrected `release-manifest.json` for the already-published `v0.2.0` release.
+- [x] Fixed installer cleanup under `set -u`; public-release macOS arm64 install now exits successfully and reports `salad 0.2.0`.

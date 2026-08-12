@@ -36,6 +36,11 @@ need_cmd() {
   exit 1
 }
 
+cleanup_dir() {
+  local dir="$1"
+  [[ -n "$dir" ]] && rm -rf -- "$dir"
+}
+
 resolve_bin_dir() {
   if [[ -n "${SALAD_BIN_DIR:-}" ]]; then
     mkdir -p "$SALAD_BIN_DIR"
@@ -118,8 +123,7 @@ download_release_binary() {
   local base_url="${SALAD_TERMINAL_BASE_URL:-https://github.com/${REPO}/releases/download/${resolved_tag}}"
   url="${base_url}/${archive}"
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/salad-terminal.XXXXXX")"
-  cleanup() { rm -rf "$tmp"; }
-  trap cleanup EXIT
+  trap "cleanup_dir $(printf '%q' "$tmp")" EXIT
 
   echo "Downloading Salad Terminal (${resolved_tag} / ${target})…"
   if ! curl_download "$url" "${tmp}/${archive}"; then
@@ -187,8 +191,7 @@ fetch_and_build_source() {
   need_cmd go
   local tmp
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/salad-terminal.XXXXXX")"
-  cleanup() { rm -rf "$tmp"; }
-  trap cleanup EXIT
+  trap "cleanup_dir $(printf '%q' "$tmp")" EXIT
   echo "Fetching Salad Terminal source…"
   git clone --depth 1 --branch "${SALAD_TERMINAL_REF:-main}" "https://github.com/${REPO}.git" "$tmp/src"
   build_from_dir "$tmp/src"
