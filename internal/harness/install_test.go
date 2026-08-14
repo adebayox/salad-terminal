@@ -2,7 +2,9 @@ package harness
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -70,5 +72,24 @@ func TestForcedInstallCanRollbackToPreviousRuntime(t *testing.T) {
 	data, err = os.ReadFile(installed)
 	if err != nil || string(data) != "first runtime" {
 		t.Fatalf("after rollback runtime = %q, err=%v", data, err)
+	}
+}
+
+func TestInstallSignsMacOSMachORuntime(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS-only carrier execution contract")
+	}
+	t.Setenv("SALAD_CONFIG_DIR", t.TempDir())
+	source, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	installed, err := Install(source, "", false)
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if err := exec.Command("codesign", "--verify", "--verbose", installed).Run(); err != nil {
+		t.Fatalf("installed Mach-O is not executable under macOS signing policy: %v", err)
 	}
 }
