@@ -85,23 +85,25 @@ fi
 "$pnpm_bin" exec tsx scripts/build-exe-for-python-sdk.ts --skip-build --targets="$target"
 
 platform="${target#node24-}"
+target_platform="${platform%-*}"
+target_arch="${platform##*-}"
 carrier="$(find dist-exe -maxdepth 1 -type f -name "dsh-acp-agent-pkg-${platform}" -print -quit)"
 if [[ -z "$carrier" ]]; then
   echo "DeepSeek carrier was not produced for $target" >&2
   exit 1
 fi
 
-release_platform="$platform"
+release_platform="$target_platform"
 if [[ "$release_platform" == "macos" ]]; then
   # DeepSeek uses "macos" in its pkg target; Salad release artifacts use
   # the same darwin label as the terminal binary and installer.
   release_platform="darwin"
 fi
-install -m 700 "$carrier" "$output_dir/dsh-acp-agent-$release_platform-${target##*-}"
+install -m 700 "$carrier" "$output_dir/dsh-acp-agent-$release_platform-$target_arch"
 install -m 600 examples/acp-agent/cordis.yml "$output_dir/cordis.yml"
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$output_dir" && sha256sum "dsh-acp-agent-$release_platform-${target##*-}" > SHA256SUMS)
+  (cd "$output_dir" && sha256sum "dsh-acp-agent-$release_platform-$target_arch" > SHA256SUMS)
 else
-  (cd "$output_dir" && shasum -a 256 "dsh-acp-agent-$release_platform-${target##*-}" > SHA256SUMS)
+  (cd "$output_dir" && shasum -a 256 "dsh-acp-agent-$release_platform-$target_arch" > SHA256SUMS)
 fi
-echo "Built $output_dir/dsh-acp-agent-$release_platform-${target##*-}"
+echo "Built $output_dir/dsh-acp-agent-$release_platform-$target_arch"
