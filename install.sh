@@ -42,6 +42,7 @@ cleanup_dir() {
 }
 
 SALAD_INSTALL_TMP_DIR=""
+SALAD_INSTALLED_BIN_DIR=""
 
 cleanup_install_tmp_dir() {
   if [[ -n "$SALAD_INSTALL_TMP_DIR" ]]; then
@@ -69,6 +70,7 @@ install_binary() {
   local bin_dir
   bin_dir="$(resolve_bin_dir)"
   install -m 755 "$src" "${bin_dir}/salad"
+  SALAD_INSTALLED_BIN_DIR="$bin_dir"
   echo "Installed: ${bin_dir}/salad"
 
   case ":$PATH:" in
@@ -79,6 +81,69 @@ install_binary() {
       echo "  export PATH=\"${bin_dir}:\$PATH\""
       ;;
   esac
+}
+
+verify_release_checksum() {
+  local archive="$1"
+  local checksums_file="$2"
+  local checksums actual name
+  name="$(basename "$archive")"
+  checksums="$(awk -v name="$name" '$2 == name { print $1; exit }' "$checksums_file")"
+  if [[ -z "$checksums" ]]; then
+    echo "error: SHA256SUMS does not contain ${name}" >&2
+    exit 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$archive" | awk '{print $1}')"
+  else
+    need_cmd shasum
+    actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  fi
+  if [[ "$actual" != "$checksums" ]]; then
+    echo "error: checksum verification failed for $(basename "$archive")" >&2
+    exit 1
+  fi
+}
+
+install_harness_release() {
+  local base_url="$1"
+  local target="$2"
+  local tmp="$3"
+  local archive="salad-harness-${target}.tar.gz"
+
+  if [[ "${SALAD_SKIP_HARNESS:-}" == "1" ]]; then
+    echo "Skipping Salad Harness runtime because SALAD_SKIP_HARNESS=1"
+    return 0
+  fi
+
+  # The DeepSeek carrier currently supports macOS and Linux only. Windows
+  # keeps the normal Salad Terminal installer path until a native carrier is
+  # available for that platform.
+  echo "Downloading Salad Harness runtime (${target})…"
+  if ! curl_download "${base_url}/${archive}" "${tmp}/${archive}"; then
+    echo "error: this Salad release does not contain the required harness runtime (${archive})" >&2
+    echo "Set SALAD_SKIP_HARNESS=1 only if you intentionally want terminal chat without the developer harness." >&2
+    exit 1
+  fi
+  if [[ ! -f "${tmp}/SHA256SUMS" ]]; then
+    if ! curl_download "${base_url}/SHA256SUMS" "${tmp}/SHA256SUMS"; then
+      echo "error: release has no SHA256SUMS manifest for the harness runtime" >&2
+      exit 1
+    fi
+  fi
+  verify_release_checksum "${tmp}/${archive}" "${tmp}/SHA256SUMS"
+  mkdir -p "${tmp}/harness"
+  tar -xzf "${tmp}/${archive}" -C "${tmp}/harness"
+  local runtime_path="${tmp}/harness/dsh-acp-agent-${target}"
+  local config_path="${tmp}/harness/cordis.yml"
+  if [[ ! -x "$runtime_path" || ! -f "$config_path" ]]; then
+    echo "error: harness archive is missing its runtime or cordis.yml" >&2
+    exit 1
+  fi
+  "${SALAD_INSTALLED_BIN_DIR}/salad" harness install \
+    --runtime "$runtime_path" \
+    --config "$config_path" \
+    --force
 }
 
 detect_target() {
@@ -152,21 +217,7 @@ download_release_binary() {
     fi
     echo "warning: installing without a checksum manifest because SALAD_ALLOW_UNVERIFIED_INSTALL=1" >&2
   else
-    checksums="$(awk -v name="$archive" '$2 == name { print $1; exit }' "${tmp}/SHA256SUMS")"
-    if [[ -z "$checksums" ]]; then
-      echo "error: SHA256SUMS does not contain ${archive}" >&2
-      exit 1
-    fi
-    if command -v sha256sum >/dev/null 2>&1; then
-      actual="$(sha256sum "${tmp}/${archive}" | awk '{print $1}')"
-    else
-      need_cmd shasum
-      actual="$(shasum -a 256 "${tmp}/${archive}" | awk '{print $1}')"
-    fi
-    if [[ "$actual" != "$checksums" ]]; then
-      echo "error: checksum verification failed for ${archive}" >&2
-      exit 1
-    fi
+    verify_release_checksum "${tmp}/${archive}" "${tmp}/SHA256SUMS"
   fi
 
   tar -xzf "${tmp}/${archive}" -C "$tmp"
@@ -182,6 +233,7 @@ download_release_binary() {
   fi
 
   install_binary "${tmp}/salad"
+  install_harness_release "$base_url" "$target" "$tmp"
   echo "Version: ${ver}"
 }
 

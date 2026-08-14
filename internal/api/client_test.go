@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -107,5 +108,32 @@ func TestClientEscapesMessageCursor(t *testing.T) {
 	client := New(server.URL, "token")
 	if _, err := client.ListMessages(context.Background(), "chat-1", "message&next=1"); err != nil {
 		t.Fatalf("ListMessages() error = %v", err)
+	}
+}
+
+func TestClientPostsHarnessLifecycleReceipt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/harness/events" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["chat_id"] != "chat-1" || body["status"] != "completed" {
+			t.Fatalf("body = %#v", body)
+		}
+		if _, present := body["prompt"]; present {
+			t.Fatal("lifecycle receipt must not contain the prompt")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "token")
+	if err := client.PostHarnessRunEvent(context.Background(), HarnessRunEventRequest{
+		ChatID: "chat-1", RunID: "run-1", WorkspaceID: "workspace-1", Status: "completed",
+	}); err != nil {
+		t.Fatalf("PostHarnessRunEvent() error = %v", err)
 	}
 }

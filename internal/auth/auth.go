@@ -213,6 +213,7 @@ func AuthedClient() (*api.Client, *config.Credentials, error) {
 		creds.Email = firstNonEmpty(response.User.Email, creds.Email)
 		creds.Name = firstNonEmpty(response.User.Name, creds.Name)
 		creds.InstallID = firstNonEmpty(response.Session.InstallID, creds.InstallID)
+		client.AccessToken = creds.AccessToken
 		return config.SaveCredentials(creds)
 	}
 	return client, creds, nil

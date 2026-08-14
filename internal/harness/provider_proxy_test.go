@@ -1,0 +1,109 @@
+package harness
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/salad-ai/salad-terminal/internal/api"
+)
+
+func TestProviderProxyKeepsSaladTokenOutOfChildBoundary(t *testing.T) {
+	const saladToken = "salad-session-token"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+saladToken {
+			t.Fatalf("upstream authorization = %q", got)
+		}
+		if got := r.Header.Get("X-Salad-Harness-Provider"); got != "openai" {
+			t.Fatalf("upstream provider = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer upstream.Close()
+
+	client := api.New(upstream.URL, saladToken)
+	proxy, err := StartProviderProxy(context.Background(), client, "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = proxy.Close(ctx)
+	}()
+	env := strings.Join(proxy.Environment(), "\n")
+	if strings.Contains(env, saladToken) {
+		t.Fatal("provider proxy environment contains the Salad access token")
+	}
+	apiKey := strings.TrimPrefix(strings.Split(proxy.Environment()[0], "=")[1], "")
+	req, err := http.NewRequest(http.MethodPost, proxy.BaseURL()+"/v1/chat/completions", strings.NewReader(`{"stream":false,"messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("proxy status = %d body=%s", response.StatusCode, body)
+	}
+}
+
+func TestProviderProxyRefreshesExpiredSaladSession(t *testing.T) {
+	var requests int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer refreshed-token" {
+			t.Fatalf("refreshed upstream authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer upstream.Close()
+
+	client := api.New(upstream.URL, "expired-token")
+	client.RefreshFunc = func(context.Context) error {
+		client.AccessToken = "refreshed-token"
+		return nil
+	}
+	proxy, err := StartProviderProxy(context.Background(), client, "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = proxy.Close(ctx)
+	}()
+
+	apiKey := strings.TrimPrefix(strings.Split(proxy.Environment()[0], "=")[1], "")
+	req, err := http.NewRequest(http.MethodPost, proxy.BaseURL()+"/v1/chat/completions", strings.NewReader(`{"stream":false,"messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("proxy refresh status = %d body=%s", response.StatusCode, body)
+	}
+	if requests != 2 {
+		t.Fatalf("upstream requests = %d, want 2", requests)
+	}
+}

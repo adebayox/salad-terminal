@@ -540,6 +540,23 @@ type ToolResultRequest struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type HarnessRunEventRequest struct {
+	ChatID      string `json:"chat_id"`
+	RunID       string `json:"run_id"`
+	WorkspaceID string `json:"workspace_id"`
+	Status      string `json:"status"`
+	Summary     string `json:"summary,omitempty"`
+	Sequence    int64  `json:"sequence,omitempty"`
+}
+
+func (c *Client) PostHarnessRunEvent(ctx context.Context, req HarnessRunEventRequest) error {
+	if strings.TrimSpace(req.ChatID) == "" || strings.TrimSpace(req.RunID) == "" || strings.TrimSpace(req.WorkspaceID) == "" {
+		return fmt.Errorf("chat_id, run_id, and workspace_id are required")
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/harness/events", req)
+	return err
+}
+
 func (c *Client) PostToolResult(ctx context.Context, req ToolResultRequest) error {
 	if strings.TrimSpace(req.RequestID) == "" || strings.TrimSpace(req.ToolCallID) == "" {
 		return fmt.Errorf("request_id and tool_call_id required")

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/auth"
 	"github.com/salad-ai/salad-terminal/internal/chat"
 	"github.com/salad-ai/salad-terminal/internal/config"
+	"github.com/salad-ai/salad-terminal/internal/harness"
 	"github.com/salad-ai/salad-terminal/internal/theme"
 	"github.com/salad-ai/salad-terminal/internal/tui"
 	"github.com/salad-ai/salad-terminal/internal/update"
@@ -66,6 +69,12 @@ func run(args []string) error {
 			return nil
 		}
 		return runDoctor()
+	case "harness":
+		if hasHelp(rest) {
+			printCommandUsage("harness")
+			return nil
+		}
+		return runHarness(rest)
 	case "update":
 		if hasHelp(rest) {
 			printCommandUsage("update")
@@ -298,6 +307,266 @@ func requireInteractive(command string) error {
 	return fmt.Errorf("%s needs an interactive terminal; use `--help` for non-interactive commands", command)
 }
 
+func runHarness(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: salad harness [install|rollback|doctor|options] <prompt>")
+	}
+	if args[0] == "install" {
+		return runHarnessInstall(args[1:])
+	}
+	if args[0] == "rollback" {
+		if len(args) != 1 {
+			return fmt.Errorf("usage: salad harness rollback")
+		}
+		runtimePath, err := harness.Rollback()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Restored previous Salad Harness runtime: %s\n", runtimePath)
+		return nil
+	}
+	resumeOf := ""
+	if args[0] == "resume" {
+		if len(args) < 2 {
+			return fmt.Errorf("usage: salad harness resume <run-id> <prompt>")
+		}
+		record, err := harness.LoadRun(args[1])
+		if err != nil {
+			return err
+		}
+		root, err := workspace.ResolveRoot("")
+		if err != nil || root != record.Workspace {
+			return fmt.Errorf("resume must run from the original workspace: %s", record.Workspace)
+		}
+		resumeOf = record.ID
+		args = append([]string{"--protocol", record.Protocol}, args[2:]...)
+		if record.Command != "" {
+			args = append([]string{"--command", record.Command}, args...)
+		}
+		if record.Config != "" {
+			args = append([]string{"--config", record.Config}, args...)
+		}
+		args = append([]string{"Continue the previous Salad Harness run. Previous request: " + record.Prompt + ". New request:"}, args...)
+	}
+	if args[0] == "doctor" {
+		if len(args) != 1 {
+			return fmt.Errorf("harness doctor does not take options; use `salad help harness`")
+		}
+		return runHarnessDoctor()
+	}
+	command, configPath, protocol, provider, model, sessionID, chatID := "", "", firstNonEmpty(os.Getenv("SALAD_DSH_PROTOCOL"), "acp"), "", "", "", ""
+	saladProvider := strings.TrimSpace(os.Getenv("SALAD_HARNESS_PROVIDER"))
+	var prompt []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--command", "--config", "--protocol", "--provider", "--model", "--session", "--chat", "--salad-provider":
+			if i+1 >= len(args) {
+				return fmt.Errorf("harness option value is missing; use `salad harness --help`")
+			}
+			switch args[i] {
+			case "--command":
+				command = args[i+1]
+			case "--config":
+				configPath = args[i+1]
+			case "--protocol":
+				protocol = args[i+1]
+			case "--provider":
+				provider = args[i+1]
+			case "--model":
+				model = args[i+1]
+			case "--session":
+				sessionID = args[i+1]
+			case "--chat":
+				chatID = args[i+1]
+			case "--salad-provider":
+				saladProvider = args[i+1]
+			}
+			i++
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown harness option %q; use `salad harness --help`", args[i])
+			}
+			prompt = append(prompt, args[i])
+		}
+	}
+	if protocol != "acp" && protocol != "jsonrpc" {
+		return fmt.Errorf("unsupported harness protocol %q; choose acp or jsonrpc", protocol)
+	}
+	if protocol == "acp" && sessionID != "" {
+		return fmt.Errorf("ACP starts a fresh session; use --protocol jsonrpc for a resumable SDK session")
+	}
+	if len(prompt) == 0 {
+		return fmt.Errorf("harness prompt cannot be empty")
+	}
+	root, err := workspace.EnsureTrusted("")
+	if err != nil {
+		return err
+	}
+	if err := requireInteractive("salad harness"); err != nil {
+		return err
+	}
+	if command == "" {
+		command = harness.InstalledCommand()
+	}
+	opts := harness.Options{
+		Command: command, Provider: provider, Model: model, SessionID: sessionID, Cwd: root,
+		Input: os.Stdin, Output: os.Stdout,
+	}
+	if configPath == "" {
+		configPath = firstNonEmpty(harness.InstalledConfig(), os.Getenv("SALAD_DSH_CONFIG"), os.Getenv("DSH_CORDIS_CONFIG"))
+	}
+	if protocol == "acp" && configPath != "" {
+		opts.Args = []string{"--config", configPath}
+	}
+	if protocol == "jsonrpc" && configPath != "" {
+		opts.Env = []string{"DSH_CORDIS_CONFIG=" + configPath}
+	}
+	var providerProxy *harness.ProviderProxy
+	if strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")) == "" && command == harness.InstalledCommand() {
+		providerClient, _, authErr := auth.AuthedClient()
+		if authErr != nil {
+			return fmt.Errorf("the installed Salad Harness needs a signed-in Salad account or DEEPSEEK_API_KEY: %w", authErr)
+		}
+		providerProxy, err = harness.StartProviderProxy(context.Background(), providerClient, saladProvider)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			closeContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = providerProxy.Close(closeContext)
+		}()
+		opts.Env = append(opts.Env, providerProxy.Environment()...)
+	}
+	workspaceID, _ := workspace.OpaqueID(root)
+	runID := fmt.Sprintf("salad-harness-%d", time.Now().UnixNano())
+	fmt.Printf("[harness] run id: %s\n", runID)
+	if err := harness.SaveRun(harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, Command: command, Config: configPath, Prompt: strings.Join(prompt, " "), StartedAt: time.Now().UTC(), ResumeOf: resumeOf}); err != nil {
+		return fmt.Errorf("save harness run record: %w", err)
+	}
+	if chatID == "" {
+		chatID = strings.TrimSpace(os.Getenv("SALAD_HARNESS_CHAT_ID"))
+	}
+	if chatID == "" {
+		if active, activeErr := config.LoadActiveChat(); activeErr == nil {
+			chatID = active.ChatID
+		}
+	}
+	postHarnessEvent(context.Background(), chatID, runID, workspaceID, "started", "Harness run started")
+	postHarnessEventWithSequence(context.Background(), chatID, runID, workspaceID, "running", "Harness is working in the trusted workspace", 2)
+	runContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if protocol == "jsonrpc" {
+		_, err = harness.Run(runContext, opts, strings.Join(prompt, " "))
+	} else {
+		_, err = harness.RunACP(runContext, opts, strings.Join(prompt, " "))
+	}
+	status, summary := "completed", "Harness run completed"
+	if err != nil {
+		status = "failed"
+		summary = "Harness run failed"
+		if errors.Is(err, context.Canceled) {
+			status = "cancelled"
+			summary = "Harness run cancelled"
+		}
+	}
+	postHarnessEventWithSequence(context.Background(), chatID, runID, workspaceID, status, summary, 3)
+	return err
+}
+
+func postHarnessEvent(ctx context.Context, chatID, runID, workspaceID, status, summary string) {
+	postHarnessEventWithSequence(ctx, chatID, runID, workspaceID, status, summary, 1)
+}
+
+func postHarnessEventWithSequence(ctx context.Context, chatID, runID, workspaceID, status, summary string, sequence int64) {
+	if strings.TrimSpace(chatID) == "" || strings.TrimSpace(workspaceID) == "" {
+		return
+	}
+	client, _, err := auth.AuthedClient()
+	if err != nil {
+		return
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_ = client.PostHarnessRunEvent(requestCtx, api.HarnessRunEventRequest{
+		ChatID: chatID, RunID: runID, WorkspaceID: workspaceID, Status: status, Summary: summary, Sequence: sequence,
+	})
+}
+
+func runHarnessInstall(args []string) error {
+	if len(args) == 0 || hasHelp(args) {
+		printCommandUsage("harness")
+		return nil
+	}
+	runtimePath, configPath := "", ""
+	force := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--runtime":
+			if i+1 >= len(args) {
+				return fmt.Errorf("harness install --runtime needs a path")
+			}
+			runtimePath = args[i+1]
+			i++
+		case "--config":
+			if i+1 >= len(args) {
+				return fmt.Errorf("harness install --config needs a path")
+			}
+			configPath = args[i+1]
+			i++
+		case "--force":
+			force = true
+		default:
+			return fmt.Errorf("unknown harness install option %q", args[i])
+		}
+	}
+	installed, err := harness.Install(runtimePath, configPath, force)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Installed Salad Harness runtime: %s\n", installed)
+	if configPath != "" {
+		fmt.Println("Installed project config for future runs.")
+	}
+	fmt.Println("Next: trust the project, then run `salad harness \"inspect this project and make a plan\"`.")
+	return nil
+}
+
+func runHarnessDoctor() error {
+	command := harness.InstalledCommand()
+	protocol := firstNonEmpty(os.Getenv("SALAD_DSH_PROTOCOL"), "acp")
+	configPath := firstNonEmpty(harness.InstalledConfig(), os.Getenv("DSH_CORDIS_CONFIG"))
+	fmt.Println("Salad Harness doctor")
+	fmt.Printf("protocol: %s\n", protocol)
+	fmt.Printf("command: %s\n", command)
+	if resolved, err := exec.LookPath(command); err == nil {
+		fmt.Printf("executable: %s\n", resolved)
+	} else {
+		fmt.Printf("executable: missing (%s)\n", err)
+	}
+	if runtimePath, installedConfig, digest, installed, err := harness.InstallationStatus(); err == nil {
+		if installed {
+			fmt.Printf("installed runtime: %s\n", runtimePath)
+			fmt.Printf("installed sha256: %s\n", digest)
+			if installedConfig != "" {
+				fmt.Printf("installed config: %s\n", installedConfig)
+			}
+		} else {
+			fmt.Println("managed install: not installed")
+		}
+	} else {
+		fmt.Printf("managed install: invalid (%s)\n", err)
+	}
+	if configPath == "" {
+		fmt.Println("config: not set (ACP command will look for cordis.yml in the workspace)")
+	} else if info, err := os.Stat(configPath); err != nil {
+		fmt.Printf("config: missing (%s)\n", err)
+	} else {
+		fmt.Printf("config: %s (%s)\n", configPath, info.Mode().Type())
+	}
+	return nil
+}
+
 func hasHelp(args []string) bool {
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -455,6 +724,7 @@ Other:
   salad update          Install the latest release
   salad version         Show the installed version
   salad doctor          Check sign-in, API, and workspace setup
+  salad harness         Run the opt-in DeepSeek Harness preview
 
 Run salad <command> --help for command details.
 `, Version)
@@ -522,6 +792,28 @@ Open a chat by ID. Without an ID, choose from previous chats.
 	case "logout":
 		fmt.Println("Usage: salad logout")
 		fmt.Println("Sign out on this computer and remove local Salad Terminal credentials.")
+	case "harness":
+		fmt.Print(`Usage: salad harness [install|rollback|doctor|options] <prompt>
+
+Run a DeepSeek Harness session in the trusted current workspace. Install a
+runtime is installed automatically by the macOS/Linux release installer.
+"salad harness install" is for development or a manually supplied carrier;
+"salad harness rollback" restores the last managed carrier. This does not use
+or change your normal Salad chat. "salad harness doctor" checks the setup.
+
+  install --runtime <path> [--config <path>] [--force]
+  rollback                 Restore the previous managed runtime
+  resume <run-id> <prompt>  Continue from a saved local run record
+
+  --command <path>        DSH ACP executable (or SALAD_DSH_COMMAND)
+  --config <path>         ACP cordis.yml (or SALAD_DSH_CONFIG)
+  --protocol <name>       acp (default) or jsonrpc compatibility mode
+  --provider <name>       DSH provider (or SALAD_DSH_PROVIDER)
+  --model <name>          DSH model (or SALAD_DSH_MODEL)
+  --salad-provider <name> Salad provider for the authenticated local bridge
+  --session <id>          JSON-RPC compatibility mode only
+  --chat <id>             Share run start/finish with this Salad chat
+`)
 	case "doctor":
 		fmt.Println("Usage: salad doctor")
 		fmt.Println("Check the local install, sign-in, Salad API, and current workspace.")

@@ -1,0 +1,129 @@
+# DeepSeek Harness preview
+
+Salad Terminal now has an opt-in bridge to DeepSeek Harness. This is a local
+developer preview; it is not the normal Salad chat engine. The interactive
+bridge uses DeepSeek's ACP interface because it supports approval decisions
+and cancellation.
+
+## What is unchanged
+
+These commands still use the existing Salad chat path:
+
+```text
+salad
+salad new
+salad --continue
+salad --resume
+salad resume <chat-id>
+salad say "..."
+```
+
+The preview does not create messages or enter Salad's normal AI router. If a
+chat is active, it may publish a small lifecycle receipt through
+the authenticated `/api/harness/events` endpoint. That receipt contains a
+run ID, opaque workspace ID, status, and short summary; it does not contain
+prompts, file contents, tool arguments, or secrets. Normal chat messages,
+routing, billing, quota, and message storage are unchanged.
+
+## Run it
+
+On a supported macOS or Linux release, the normal installer installs the
+matching pinned ACP carrier automatically. Then trust the repository
+deliberately:
+
+```bash
+cd your-repository
+salad workspace trust
+```
+
+Sign in to Salad before the first run. The installed carrier uses a
+loopback-only bridge to Salad's authenticated provider path, so the Salad
+access token never enters the child process. Choose the active provider or
+select one explicitly:
+
+```text
+salad login
+salad harness --salad-provider openai \
+  "Inspect the tests, show a plan first, and do not edit yet."
+```
+
+Developers who intentionally use a direct DeepSeek key can use the escape
+hatch `DEEPSEEK_API_KEY=...`; Salad never stores or forwards that key.
+
+Before starting, check the local setup without touching the project:
+
+```text
+salad harness doctor
+```
+
+For development builds or a manually supplied carrier, Salad Terminal can
+install an ACP carrier into its private config directory. The install records
+the carrier SHA-256, keeps one managed previous version, and does not replace
+an existing carrier unless `--force` is supplied:
+
+```text
+salad harness install --runtime /path/to/dsh-acp-agent --config /path/to/cordis.yml
+salad harness doctor
+salad harness "read the project instructions, inspect the tests, and make a plan"
+salad harness rollback
+```
+
+If a Salad chat is active, the harness shares only lifecycle receipts with
+that chat. Use `--chat <chat-id>` to choose another chat. These are durable
+realtime events, not messages, so they do not trigger normal Salad AI
+routing. A signed-out account can still use the direct-key escape hatch;
+otherwise the authenticated Salad provider bridge is required.
+
+Each ACP run receives a local run ID. Continue a previous run explicitly with:
+
+```text
+salad harness resume <run-id> "Now run the focused test and explain the result"
+```
+
+DeepSeek ACP currently starts a fresh session for this command. Salad makes
+that limitation explicit and carries the previous request into the new local
+run record; it does not pretend to offer server-side session resume.
+
+When DSH asks to do something outside its allowed workspace, Salad shows a
+clear `Allow once? [y/N]` question. The safe default is rejection. Press
+Ctrl-C to cancel the local run.
+
+The ACP preview starts a fresh DSH session for each invocation. DeepSeek's ACP
+bridge does not yet expose resume/list/load, so `salad harness resume` is a
+Salad continuation rather than a DSH session restore. The old SDK JSON-RPC
+mode is available only as an explicit compatibility option:
+
+```text
+salad harness --protocol jsonrpc --command /path/to/dsh-jsonrpc-agent \
+  --session salad-your-session-id "Continue from the previous run"
+```
+
+## Runtime packaging
+
+DeepSeek Harness is currently a developer preview with compatibility-breaking
+changes. Its source repository documents a full Node/plugin closure and a
+separately packaged JSON-RPC runtime executable for the Python SDK. Salad's
+ACP carrier is built from a pinned DeepSeek source revision and published as a
+platform-specific release asset. `install.sh` verifies the release checksum
+before handing the carrier to Salad's managed installer. The carrier currently
+ships for macOS/Linux; Windows keeps the normal Salad Terminal path until a
+native carrier is available.
+
+## Current boundary
+
+```text
+Salad Terminal
+  ├─ authenticates and runs normal Salad chat exactly as before
+  └─ `salad harness` starts one local DSH child process
+       ├─ trusted workspace cwd
+       ├─ scrubbed environment
+       ├─ stdio ACP session updates
+       ├─ one-shot approval decisions
+       └─ session cancellation, then bounded kill fallback
+```
+
+The current ACP contract is intentionally limited: fresh sessions only, with
+no server-side resume/list/load. `salad harness resume` is transparent local
+continuation, not a claim that ACP restored DSH history. The integration
+remains opt-in: normal Salad chat never launches this process and no DSH
+session becomes the Salad chat source of truth.

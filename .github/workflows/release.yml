@@ -14,6 +14,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # The carrier is built from an immutable DeepSeek Harness source revision.
+  # Do not silently move this to master: the harness is in developer preview
+  # and explicitly allows compatibility-breaking changes.
+  DEEPSEEK_HARNESS_REF: 47f943859bef60e4160492346772ded9b24f765a
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -104,8 +110,68 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  harness:
+    needs: [test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin
+            arch: amd64
+            dsh_target: node24-macos-x64
+          - platform: darwin
+            arch: arm64
+            dsh_target: node24-macos-arm64
+          - platform: linux
+            arch: amd64
+            dsh_target: node24-linux-x64
+          - platform: linux
+            arch: arm64
+            dsh_target: node24-linux-arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Salad Terminal
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Checkout pinned DeepSeek Harness
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/deepseek-ai/deepseek-harness.git "$RUNNER_TEMP/deepseek-harness"
+          git -C "$RUNNER_TEMP/deepseek-harness" checkout --detach "$DEEPSEEK_HARNESS_REF"
+          test "$(git -C "$RUNNER_TEMP/deepseek-harness" rev-parse HEAD)" = "$DEEPSEEK_HARNESS_REF"
+
+      - name: Build verified ACP carrier
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ./tools/build-dsh-acp-carrier.sh \
+            "$RUNNER_TEMP/deepseek-harness" \
+            "${{ matrix.dsh_target }}" \
+            "$RUNNER_TEMP/dsh-dist"
+          archive="salad-harness-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          tar -C "$RUNNER_TEMP/dsh-dist" -czf "dist/$archive" \
+            "dsh-acp-agent-${{ matrix.platform }}-${{ matrix.arch }}" cordis.yml
+          ls -lh "dist/$archive"
+
+      - name: Upload harness archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: harness-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
   publish:
-    needs: [test, release]
+    needs: [test, release, harness]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -117,7 +183,7 @@ jobs:
       - name: Download release archives
         uses: actions/download-artifact@v6
         with:
-          pattern: terminal-*
+          pattern: '*-*-*'
           path: dist
           merge-multiple: true
 
@@ -138,7 +204,7 @@ jobs:
           printf ']}\n' >> dist/release-manifest.json
           jq -e --arg version "$version" '
             .version == $version
-            and (.artifacts | length == 6)
+            and (.artifacts | length == 10)
             and all(.artifacts[]; (.name | length > 0) and (.sha256 | test("^[0-9a-f]{64}$")))
           ' dist/release-manifest.json >/dev/null
 
@@ -150,4 +216,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --verify-tag \
             --title "Salad Terminal ${GITHUB_REF_NAME#v}" \
-            --notes "Cross-platform Salad Terminal release. macOS/Linux use install.sh; Windows uses install.ps1. Artifacts are accompanied by SHA256SUMS and release-manifest.json."
+            --notes "Cross-platform Salad Terminal release. macOS/Linux use install.sh (which also installs the pinned Salad Harness carrier); Windows uses install.ps1. Artifacts are accompanied by SHA256SUMS and release-manifest.json."
