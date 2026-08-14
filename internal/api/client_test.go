@@ -137,3 +137,20 @@ func TestClientPostsHarnessLifecycleReceipt(t *testing.T) {
 		t.Fatalf("PostHarnessRunEvent() error = %v", err)
 	}
 }
+
+func TestNewUsesHTTP11Transport(t *testing.T) {
+	client := New("https://api.example.test", "token")
+	transport, ok := client.HTTP.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", client.HTTP.Transport)
+	}
+	if transport.ForceAttemptHTTP2 {
+		t.Fatal("Salad API client must not force HTTP/2 through unstable proxies")
+	}
+	if transport.TLSNextProto == nil {
+		t.Fatal("Salad API client must disable HTTP/2 protocol handlers")
+	}
+	if len(transport.TLSClientConfig.NextProtos) != 1 || transport.TLSClientConfig.NextProtos[0] != "http/1.1" {
+		t.Fatalf("TLS ALPN protocols = %v, want [http/1.1]", transport.TLSClientConfig.NextProtos)
+	}
+}
