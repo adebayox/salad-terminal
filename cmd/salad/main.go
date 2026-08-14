@@ -421,9 +421,11 @@ func runHarness(args []string) error {
 	if protocol == "jsonrpc" && configPath != "" {
 		opts.Env = []string{"DSH_CORDIS_CONFIG=" + configPath}
 	}
+	var providerClient *api.Client
 	var providerProxy *harness.ProviderProxy
 	if strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")) == "" && command == harness.InstalledCommand() {
-		providerClient, _, authErr := auth.AuthedClient()
+		var authErr error
+		providerClient, _, authErr = auth.AuthedClient()
 		if authErr != nil {
 			return fmt.Errorf("the installed Salad Harness needs a signed-in Salad account or DEEPSEEK_API_KEY: %w", authErr)
 		}
@@ -452,8 +454,8 @@ func runHarness(args []string) error {
 			chatID = active.ChatID
 		}
 	}
-	postHarnessEvent(context.Background(), chatID, runID, workspaceID, "started", "Harness run started")
-	postHarnessEventWithSequence(context.Background(), chatID, runID, workspaceID, "running", "Harness is working in the trusted workspace", 2)
+	postHarnessEvent(context.Background(), providerClient, chatID, runID, workspaceID, "started", "Harness run started")
+	postHarnessEventWithSequence(context.Background(), providerClient, chatID, runID, workspaceID, "running", "Harness is working in the trusted workspace", 2)
 	runContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if protocol == "jsonrpc" {
@@ -470,27 +472,33 @@ func runHarness(args []string) error {
 			summary = "Harness run cancelled"
 		}
 	}
-	postHarnessEventWithSequence(context.Background(), chatID, runID, workspaceID, status, summary, 3)
+	postHarnessEventWithSequence(context.Background(), providerClient, chatID, runID, workspaceID, status, summary, 3)
 	return err
 }
 
-func postHarnessEvent(ctx context.Context, chatID, runID, workspaceID, status, summary string) {
-	postHarnessEventWithSequence(ctx, chatID, runID, workspaceID, status, summary, 1)
+func postHarnessEvent(ctx context.Context, client *api.Client, chatID, runID, workspaceID, status, summary string) {
+	postHarnessEventWithSequence(ctx, client, chatID, runID, workspaceID, status, summary, 1)
 }
 
-func postHarnessEventWithSequence(ctx context.Context, chatID, runID, workspaceID, status, summary string, sequence int64) {
+func postHarnessEventWithSequence(ctx context.Context, client *api.Client, chatID, runID, workspaceID, status, summary string, sequence int64) {
 	if strings.TrimSpace(chatID) == "" || strings.TrimSpace(workspaceID) == "" {
 		return
 	}
-	client, _, err := auth.AuthedClient()
-	if err != nil {
-		return
+	if client == nil {
+		var err error
+		client, _, err = auth.AuthedClient()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[harness] Salad chat receipt unavailable: %v\n", err)
+			return
+		}
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	_ = client.PostHarnessRunEvent(requestCtx, api.HarnessRunEventRequest{
+	if err := client.PostHarnessRunEvent(requestCtx, api.HarnessRunEventRequest{
 		ChatID: chatID, RunID: runID, WorkspaceID: workspaceID, Status: status, Summary: summary, Sequence: sequence,
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "[harness] Salad chat receipt unavailable: %v\n", err)
+	}
 }
 
 func runHarnessInstall(args []string) error {
