@@ -492,7 +492,11 @@ func postHarnessEventWithSequence(ctx context.Context, client *api.Client, chatI
 			return
 		}
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	// Receipt posts may be the first authenticated request after a long-lived
+	// terminal session. Give the client enough time to refresh an expired
+	// access token on a slow edge, without allowing a stalled receipt to hold
+	// the harness run indefinitely.
+	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := client.PostHarnessRunEvent(requestCtx, api.HarnessRunEventRequest{
 		ChatID: chatID, RunID: runID, WorkspaceID: workspaceID, Status: status, Summary: summary, Sequence: sequence,
