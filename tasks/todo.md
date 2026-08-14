@@ -228,7 +228,14 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Run the neighboring normal-chat check after harness execution: the
   existing `salad say` path returned `NORMAL_CHAT_OK`; harness runs did not
   create normal chat messages or invoke the normal chat command.
-- [ ] Complete browser receipt verification and make the terminal release
-  publicly installable. The frontend receipt PR remains open because its CI
-  quality job has unrelated pre-existing ChatArea test drift; lifecycle replay
+- [x] Make the terminal release publicly installable: merged to `main` at
+  `c68b8f5`, published `v0.2.6`, verified all six terminal archives and four
+  pinned DeepSeek carrier archives plus `SHA256SUMS`/`release-manifest.json`,
+  and installed the real macOS arm64 release with `SALAD_FORCE_REMOTE=1`.
+- [x] Reuse the authenticated Salad provider client for lifecycle receipts so
+  a token refresh used by the provider bridge also authorizes chat receipts;
+  the terminal suite and the release workflow passed after this fix.
+- [ ] Complete browser receipt verification. Backend receipt/provider routes
+  are deployed and the frontend receipt PR remains open because its quality
+  job exposes unrelated pre-existing ChatArea test drift; lifecycle replay
   after reconnect is not implemented yet.
