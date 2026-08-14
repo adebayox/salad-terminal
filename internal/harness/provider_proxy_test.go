@@ -107,3 +107,50 @@ func TestProviderProxyRefreshesExpiredSaladSession(t *testing.T) {
 		t.Fatalf("upstream requests = %d, want 2", requests)
 	}
 }
+
+func TestProviderProxyReusesSaladClientTransport(t *testing.T) {
+	called := false
+	client := api.New("https://provider.invalid", "salad-token")
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)),
+			Request:    req,
+		}, nil
+	})
+	proxy, err := StartProviderProxy(context.Background(), client, "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = proxy.Close(ctx)
+	}()
+
+	apiKey := strings.TrimPrefix(strings.Split(proxy.Environment()[0], "=")[1], "")
+	req, err := http.NewRequest(http.MethodPost, proxy.BaseURL()+"/v1/chat/completions", strings.NewReader(`{"stream":false,"messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("proxy status = %d, want 200", response.StatusCode)
+	}
+	if !called {
+		t.Fatal("provider proxy did not reuse the authenticated Salad HTTP transport")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}

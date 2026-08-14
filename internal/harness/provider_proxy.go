@@ -99,7 +99,15 @@ func (p *ProviderProxy) handle(parent context.Context, client *api.Client, provi
 		if strings.TrimSpace(provider) != "" {
 			upstream.Header.Set("X-Salad-Harness-Provider", provider)
 		}
-		return (&http.Client{Timeout: 130 * time.Second}).Do(upstream)
+		// Reuse the authenticated Salad client's transport. Creating a fresh
+		// default http.Client here would re-enable the proxy HTTP/2 failure
+		// that the normal Salad API client deliberately avoids.
+		upstreamClient := http.Client{Timeout: 130 * time.Second}
+		if client.HTTP != nil {
+			upstreamClient = *client.HTTP
+			upstreamClient.Timeout = 130 * time.Second
+		}
+		return upstreamClient.Do(upstream)
 	}
 	response, err := doUpstream()
 	if err == nil && response.StatusCode == http.StatusUnauthorized && client.RefreshFunc != nil {
