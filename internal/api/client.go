@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,10 +25,18 @@ type Client struct {
 }
 
 func New(baseURL, accessToken string) *Client {
+	// Salad API traffic can pass through proxies that advertise HTTP/2 but
+	// intermittently reset upgraded streams. Keep the CLI on HTTP/1.1 so
+	// normal chat and the harness provider/receipt bridge share one reliable
+	// transport. The API contract is unchanged.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
+	transport.TLSClientConfig = &tls.Config{NextProtos: []string{"http/1.1"}}
 	return &Client{
 		BaseURL:     strings.TrimRight(baseURL, "/"),
 		AccessToken: accessToken,
-		HTTP:        &http.Client{Timeout: 45 * time.Second},
+		HTTP:        &http.Client{Timeout: 45 * time.Second, Transport: transport},
 	}
 }
 
