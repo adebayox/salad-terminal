@@ -84,14 +84,14 @@ func TestListAndSearch(t *testing.T) {
 	}
 }
 
-func TestLegacyTrustFileStillHonored(t *testing.T) {
+func TestLegacyTrustFileDoesNotGrantTrust(t *testing.T) {
 	t.Setenv("SALAD_CONFIG_DIR", t.TempDir())
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".salad-trust"), []byte("trusted=true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !IsTrusted(root) {
-		t.Fatal("expected legacy .salad-trust to grant trust")
+	if IsTrusted(root) {
+		t.Fatal("legacy .salad-trust must not grant trust")
 	}
 }
 

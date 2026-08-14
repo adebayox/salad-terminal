@@ -1,6 +1,118 @@
 # Workspace tools harness (aligned with Salad CTO plan, 2026-07-20)
 
+## Follow-up release blocker — account creation keyboard path
+
+- [x] Reproduce the documented `c` action from the initial sign-in screen; it incorrectly entered `c` into the email field.
+- [x] Replace the conflicting hidden shortcut with a visible, keyboard-selectable account-creation action.
+- [x] Verify email input still accepts `c`, account creation is the fourth focusable action, and Google/email paths remain intact.
+
+## CLI product hardening — 2026-08-12
+
+Scope: make the complete Salad Terminal experience understandable and safe for a first-time engineer, without changing the existing chat/tool architecture unless verification shows a real product defect.
+
+- [x] First-run launch opens a clear sign-in choice; no hidden key bindings or undocumented next command.
+- [x] Email/password and browser sign-in show visible labels, navigation, retry, cancel, timeout, and account-creation recovery.
+- [x] `--help` and subcommand help work without starting a prompt; commands have consistent exit codes and human-readable errors.
+- [x] Auth/session/chat/resume/say/workspace/update flows have good, bad, offline, empty, stale, and non-interactive coverage.
+- [x] Technical diagnostics are opt-in (`SALAD_DEBUG=1`/`salad doctor`) and never replace the user-facing recovery message.
+- [x] Local credentials, workspace boundaries, approvals, and update/install behavior are reviewed for security and cross-platform compatibility.
+- [x] Non-interactive TUI commands fail before network or prompt work with an actionable terminal requirement; chat IDs and message cursors are validated/escaped before API requests.
+- [x] Public install and release artifacts are exercised from a clean macOS environment; Linux and Windows builds/install scripts are statically checked and smoke-tested where available.
+- [x] Attempted an independent challenge after implementation; the advisory run returned no report, so release signoff relies on the direct verification matrix recorded below.
+
+Evidence/research: official Claude Code, Codex CLI, OpenCode, GitHub CLI, npm, Stripe CLI, Vercel CLI, CLI Guidelines, and Diátaxis references reviewed; fresh temporary Salad installs exercised. No implementation began until this plan was recorded.
+
+## Release re-audit — 2026-08-12
+
+- [x] Removed the legacy `.salad-trust` bypass; an in-repository marker no longer grants local tool access.
+- [x] Bound every realtime `tool_request` to the active room and the current workspace opaque ID; mismatches fail closed before execution.
+- [x] Moved CLI WebSocket authentication to the `Authorization` header; tokens are no longer sent in the URL or subprotocol.
+- [x] Added visible WebSocket disconnect state and bounded reconnect attempts while polling remains the data fallback.
+- [x] Rejected staging/production credential mixing when `SALAD_API_URL` conflicts with the saved session environment.
+- [x] Added atomic local metadata writes and rollback for partial keyring/plaintext migration failures.
+- [x] Sanitized remote titles, participants, and messages before printing in headless commands so ANSI/OSC control sequences cannot control the terminal.
+- [x] Surfaced local continue-state persistence failures and partial AI-member additions instead of silently presenting success.
+- [x] Added strict workspace subcommand argument validation and a browser password-recovery command.
+- [x] Confirmed Excalidraw is an active whiteboard dependency (`SaladCanvas.jsx`), retained it, and removed the current high audit finding with a root `brace-expansion` override; `npm audit` now reports zero vulnerabilities.
+- [x] Fixed packaged Electron API resolution: the private `salad-app://` origin now defaults to production instead of inheriting the local `.env` API, and desktop release builds explicitly use production API/WebSocket/PostHog settings.
+
+Remaining work: final CLI test/build/PTY matrix, staging verification, then superseding public release and developer-page/browser signoff.
+
+Implementation evidence: visible first-run PTY flow, clean-binary command matrix, live staging QA login/whoami/chat/resume/participants/workspace checks, unknown-chat recovery, room open/exit, production API doctor probe, local Go tests including race detection, vet, shell syntax check, and cross-target build attempts. Remaining release work is final review, release artifact verification, and independent challenge.
+
 Shared brain / separate hands. Full plan lives in `saladBE/tasks/todo.md`.
+
+## DeepSeek Harness sidecar preview — 2026-08-13
+
+Scope: add an opt-in local DeepSeek Harness preview without changing ordinary
+Salad chat, chat routing, SaladBE APIs, `salad.v1`, billing, or the default
+`salad`/`--continue`/`--resume` flows.
+
+Plan before code:
+
+- [x] Re-read `AGENTS.md`/`CLAUDE.md` operating rules and inspect the clean
+  Terminal checkout plus the already-dirty backend checkout.
+- [x] Research DeepSeek Harness source/docs, Codex App Server, Claude/Gemini
+  sandboxing, OpenCode, and current practitioner reports.
+- [x] Confirm the safety boundary: trusted local workspace, separate child
+  process, explicit preview command, no Salad credential forwarding, and no
+  normal-chat code path changes.
+- [x] Add a small stdio JSON-RPC client for the DSH SDK protocol: initialize,
+  prompt, session events/status, shutdown, bounded lines, and process cleanup.
+- [x] Add `salad harness <prompt>` as an opt-in preview command. Require a
+  trusted workspace and make the DSH executable/config explicit through flags
+  or environment; do not make it the default engine.
+- [x] Add fake-runtime tests for successful events, malformed/oversized input,
+  cancellation/child shutdown, and no credential leakage.
+- [x] Run gofmt, unit tests, race tests, vet, build, and a CLI help/negative
+  command matrix. Confirm the existing normal-chat entry points are unchanged.
+- [x] Record what this preview proves and what remains before mapping DSH runs
+  into Salad chats or SaladBE policy/quota.
+
+Implementation status:
+
+- [x] Added `internal/harness` with the DSH stdio JSON-RPC boundary, trusted
+  workspace caller, scrubbed child environment, event rendering, session ID,
+  graceful EOF shutdown, and bounded kill fallback.
+- [x] Added `salad harness [options] <prompt>`. It is opt-in and never called
+  by the existing `salad`, chat, resume, send, or workspace commands.
+- [x] Added fake-runtime tests for the real `assistant/message` event shape,
+  malformed/oversized frames, cancellation cleanup, and credential scrubbing.
+- [x] Full Go tests, targeted race tests, vet, build, CLI help, trust failure,
+  and normal `salad say` negative-path smoke pass.
+- [x] Build and review DeepSeek's source-defined single-file runtime carrier
+  from the pinned source checkout (`47f943859bef60e4160492346772ded9b24f765a`)
+  and pass the real initialize/shutdown handshake.
+- [x] Exercise a real prompt against DeepSeek's deterministic mock provider:
+  session events, model-issued filesystem write, tool result, turn completion,
+  shutdown, and a model-issued `go test ./...` command all completed in a
+  disposable project.
+- [x] Replace the first JSON-RPC bridge with DeepSeek's ACP automation bridge
+  for the interactive CLI path. ACP is the documented DSH interface that has
+  cancellation and one-shot permission decisions; JSON-RPC does not expose
+  either capability.
+- [x] Run the ACP path through a disposable project with a rejected operation
+  and a successful completion; add `salad harness doctor` and environment-based
+  runtime/config discovery so a normal developer does not need to know DSH
+  internals.
+- [x] Close ACP edge cases found during verification: numeric JSON-RPC IDs,
+  valid approval responses, Ctrl-C cancellation, approval-session binding, and
+  persistent input buffering across multiple approval prompts.
+- [ ] Keep the preview local until Salad adds provider/quota policy, linked run
+  identity, replay-safe reconnect, explicit cancellation, and a reviewed DSH
+  distribution/upgrade path.
+
+Safety gates:
+
+- DSH is never launched by bare `salad` or existing chat/resume commands.
+- The child receives a scrubbed environment; Salad access/refresh tokens are
+  never forwarded.
+- The child starts only inside an explicitly trusted workspace.
+- The preview does not post DSH output into Salad chats.
+- A missing DSH binary, malformed event, timeout, or disconnect fails locally
+  and leaves normal Salad chat usable.
+- JSON-RPC is retained only as a low-level compatibility path until ACP has
+  replaced it for interactive use; it must not be presented as approval-safe.
 
 - [x] Phase 0 (with BE): stop treating code_context as machine access; no advertised tools until bridge exists; preserve Salad identity on terminal turns
 - [x] Phase 1: handle `tool_request` → local read tools → `POST /tools/result`; migrate trust off in-repo `.salad-trust`; symlink-safe reads
@@ -54,15 +166,69 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 
 ## Follow-ups
 
-- [ ] Allowlist loopback redirect URI on Google OAuth client; live-verify `--google`
+- [ ] Allowlist loopback redirect URI on Google OAuth client for staging; production browser entry is available, but staging requires provider-console configuration before end-to-end Google QA.
 - [ ] Token-stream UI for `stream_chunk` events
-- [ ] Production API default after soak
 
 ## CLI public release (2026-08-12)
 
 - [x] Local release gates: gofmt, go vet, unit tests, and six cross-compiled targets.
-- [x] Published `v0.2.0` with macOS, Linux, and Windows amd64/arm64 archives, `VERSION`, `SHA256SUMS`, and `release-manifest.json`.
+- [x] Published `v0.2.3` with macOS, Linux, and Windows amd64/arm64 archives, `VERSION`, `SHA256SUMS`, and `release-manifest.json`.
 - [x] Verified all six public archive checksums and archive contents; Unix installer exercised against the public release.
 - [x] Fixed release workflow checkout and manifest generation; added manifest validation so empty names or malformed hashes fail the publish job.
-- [x] Re-uploaded and re-verified corrected `release-manifest.json` for the already-published `v0.2.0` release.
-- [x] Fixed installer cleanup under `set -u`; public-release macOS arm64 install now exits successfully and reports `salad 0.2.0`.
+- [x] Re-uploaded and re-verified corrected `release-manifest.json` for the already-published `v0.2.3` release.
+- [x] Fixed installer cleanup under `set -u`; public-release macOS arm64 install now exits successfully and reports `salad 0.2.3`.
+- [x] Published `v0.2.4` after the product-hardening commit passed CI and clean-install verification.
+
+## DeepSeek Harness execution follow-up (2026-08-13)
+
+- [x] Build and exercise a pinned DeepSeek ACP carrier from source revision
+  `47f943859bef60e4160492346772ded9b24f765a`, including the plugin closure
+  required by the example Cordis profile.
+- [x] Add managed carrier installation under the private Salad config
+  directory, with atomic copies, an install record, SHA-256 verification, and
+  `salad harness doctor` diagnostics.
+- [x] Add local run records and an explicit `salad harness resume` command.
+  ACP starts a fresh session, so the command records that continuation
+  honestly instead of pretending DSH supports server-side resume.
+- [x] Exercise the actual pinned carrier through the installed CLI in a clean
+  disposable Go project: model streaming completed, a real `bash` tool call
+  created a proof file, and a second real tool call changed the failing test;
+  independent `go test ./...` and `go build ./cmd/app` then passed. The first
+  installer proof used a placeholder binary and was discarded as invalid.
+- [x] Add additive authenticated Salad lifecycle receipts through
+  `/api/harness/events`. Receipts are event-only and contain no prompt, file
+  contents, tool arguments, or secrets; normal chat messages and routing are
+  untouched.
+- [x] Verify ordinary `salad say` still follows its existing no-active-chat
+  path and never launches the harness.
+- [x] Wire the pinned ACP carrier into the normal macOS/Linux release flow:
+  release CI builds four platform carriers from the immutable DeepSeek
+  revision, publishes them beside the six Salad archives, and `install.sh`
+  verifies and installs the matching carrier automatically. `SALAD_SKIP_HARNESS=1`
+  is an explicit opt-out; Windows remains normal Salad Terminal only until a
+  native carrier exists.
+- [x] Add managed upgrade backup and `salad harness rollback`; rollback is
+  limited to Salad-owned files and never touches a project workspace.
+- [x] Exercise the remote-release installer with a local release fixture;
+  fixed checksum lookup so temporary download paths are compared by archive
+  filename, then verified `salad harness doctor` sees the managed carrier.
+- [x] Add the Salad-authenticated provider bridge so a normal Salad account can
+  use the managed harness without manually exporting a DeepSeek provider key.
+  The Salad token stays in the parent process; the carrier sees only an
+  ephemeral loopback token and URL. Direct `DEEPSEEK_API_KEY` use remains an
+  explicit escape hatch.
+- [x] Deploy the authenticated lifecycle/provider routes to staging through the
+  protected workflow. The first post-merge deployment exposed a host preflight
+  mismatch; a controlled rerun completed successfully and `/health/ready`
+  reported release `bca40aa`.
+- [x] Verify the live Salad-backed provider path with the installed pinned
+  carrier: text returned through the authenticated bridge, then a real project
+  edit/test workflow completed. The stream-format defect found in verification
+  was fixed in backend PR #98 and redeployed.
+- [x] Run the neighboring normal-chat check after harness execution: the
+  existing `salad say` path returned `NORMAL_CHAT_OK`; harness runs did not
+  create normal chat messages or invoke the normal chat command.
+- [ ] Complete browser receipt verification and make the terminal release
+  publicly installable. The frontend receipt PR remains open because its CI
+  quality job has unrelated pre-existing ChatArea test drift; lifecycle replay
+  after reconnect is not implemented yet.

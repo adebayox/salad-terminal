@@ -125,11 +125,12 @@ type (
 		err   error
 	}
 	roomMsg struct {
-		chatID   string
-		title    string
-		messages []api.ChatMessage
-		members  []member
-		err      error
+		chatID     string
+		title      string
+		messages   []api.ChatMessage
+		members    []member
+		err        error
+		persistErr error
 	}
 	pollMsg struct {
 		messages []api.ChatMessage
@@ -142,11 +143,15 @@ type (
 		ok  bool
 		err error
 	}
-	sentMsg struct {
+	wsRetryMsg struct{}
+	sentMsg    struct {
 		msg *api.ChatMessage
 		err error
 	}
 	loginDoneMsg struct {
+		err error
+	}
+	signupDoneMsg struct {
 		err error
 	}
 	createdChatMsg struct {
@@ -243,8 +248,8 @@ func openRoomCmd(client *api.Client, chatID string) tea.Cmd {
 		if err != nil {
 			return roomMsg{err: err}
 		}
-		_ = config.SaveActiveChat(&config.ActiveChat{ChatID: chatID, Title: title})
-		return roomMsg{chatID: chatID, title: title, messages: messages, members: members}
+		persistErr := config.SaveActiveChat(&config.ActiveChat{ChatID: chatID, Title: title})
+		return roomMsg{chatID: chatID, title: title, messages: messages, members: members, persistErr: persistErr}
 	}
 }
 
@@ -337,8 +342,8 @@ func createChatAndOpenCmd(client *api.Client, workspaceDir string, aiSlugs []str
 		} else {
 			members = membersFromAISlugs(aiSlugs)
 		}
-		_ = config.SaveActiveChat(&config.ActiveChat{ChatID: chat.ID, Title: title})
-		return roomMsg{chatID: chat.ID, title: title, messages: nil, members: members}
+		persistErr := config.SaveActiveChat(&config.ActiveChat{ChatID: chat.ID, Title: title})
+		return roomMsg{chatID: chat.ID, title: title, messages: nil, members: members, persistErr: persistErr}
 	}
 }
 
@@ -541,7 +546,6 @@ func (m *model) openSelectedChat(id, title string) tea.Cmd {
 	m.err = ""
 	m.composer.SetValue("")
 	m.composer.Focus()
-	_ = config.BindWorkspace(m.workspaceDir, id, title)
 	return openRoomCmd(m.client, id)
 }
 
@@ -555,7 +559,7 @@ func (m *model) showResumePicker(status string) tea.Cmd {
 }
 
 func (m *model) afterAuth() tea.Cmd {
-	wsCmd := wsListenCmd(config.BaseURL(), m.creds.AccessToken)
+	wsCmd := wsListenCmd(m.creds.BaseURL, m.creds.AccessToken)
 
 	// Explicit resume picker (claude --resume).
 	if m.forceResume {
@@ -566,7 +570,6 @@ func (m *model) afterAuth() tea.Cmd {
 	if m.chatID != "" {
 		m.screen = screenRoom
 		m.status = "Opening…"
-		_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
 		return tea.Batch(openRoomCmd(m.client, m.chatID), wsCmd)
 	}
 
@@ -577,7 +580,6 @@ func (m *model) afterAuth() tea.Cmd {
 			m.chatTitle = title
 			m.screen = screenRoom
 			m.status = "Continuing…"
-			_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
 			return tea.Batch(openRoomCmd(m.client, m.chatID), wsCmd)
 		}
 		return tea.Batch(m.showResumePicker("No recent chat here · n new · enter open"), wsCmd)
@@ -692,6 +694,10 @@ func wsListenCmd(baseURL, token string) tea.Cmd {
 	}
 }
 
+func wsRetryCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return wsRetryMsg{} })
+}
+
 type wsSessionMsg struct {
 	client *realtime.Client
 	ch     <-chan realtime.Event
@@ -705,6 +711,23 @@ func nextWSCmd(ch <-chan realtime.Event) tea.Cmd {
 		}
 		return wsEventMsg{evt: evt}
 	}
+}
+
+func validateToolRequestScope(currentScreen screen, activeChatID, workspaceDir, eventChatID string, workspaceOK bool, req tools.Request) error {
+	if currentScreen != screenRoom || strings.TrimSpace(eventChatID) == "" || eventChatID != activeChatID {
+		return fmt.Errorf("tool request is outside the active chat")
+	}
+	if strings.TrimSpace(req.RequestID) == "" || strings.TrimSpace(req.ToolCallID) == "" {
+		return fmt.Errorf("tool request is missing ids")
+	}
+	if !workspaceOK {
+		return fmt.Errorf("workspace tools are not enabled here")
+	}
+	expectedWorkspace, err := workspace.OpaqueID(workspaceDir)
+	if err != nil || strings.TrimSpace(req.WorkspaceID) == "" || req.WorkspaceID != expectedWorkspace {
+		return fmt.Errorf("tool request is for another workspace")
+	}
+	return nil
 }
 
 // executeToolCmd runs a tool (read-only, or an already-approved edit/command)
@@ -934,6 +957,12 @@ func loginGoogleCmd() tea.Cmd {
 	}
 }
 
+func signupCmd() tea.Cmd {
+	return func() tea.Msg {
+		return signupDoneMsg{err: auth.OpenSignupBrowserFor(config.BaseURL())}
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -957,13 +986,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case loginDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
-			m.status = "Sign in failed"
+			m.err = api.HumanizeError(msg.err)
+			m.status = "Sign-in did not work"
 			return m, nil
 		}
 		client, creds, err := auth.AuthedClient()
 		if err != nil {
-			m.err = err.Error()
+			m.err = api.HumanizeError(err)
 			return m, nil
 		}
 		m.client = client
@@ -971,12 +1000,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = ""
 		return m, m.afterAuth()
 
+	case signupDoneMsg:
+		if msg.err != nil {
+			m.err = "Could not open your browser. Use `salad signup` to print the account-creation link."
+			return m, nil
+		}
+		m.status = "Account creation opened — return here and sign in when it is ready."
+		m.err = ""
+		return m, nil
+
 	case chatsMsg:
 		m.chatLoad = false
 		if msg.err != nil {
 			// On the new-chat entry, previous chats are optional chrome — don't block AI pick.
 			if m.screen != screenNewAI {
-				m.err = msg.err.Error()
+				m.err = api.HumanizeError(msg.err)
 			}
 			return m, nil
 		}
@@ -1007,7 +1045,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case aiProductsMsg:
 		m.aiLoad = false
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.err = api.HumanizeError(msg.err)
 			m.status = "Could not load AIs"
 			return m, nil
 		}
@@ -1029,21 +1067,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case addedAIsMsg:
 		m.chatCreating = false
-		if msg.err != nil {
-			m.err = msg.err.Error()
+		if msg.err != nil && msg.count == 0 {
+			m.err = api.HumanizeError(msg.err)
 			m.status = "Could not add AIs"
 			return m, nil
 		}
 		m.screen = screenRoom
 		m.status = fmt.Sprintf("Added %d AI(s) — @mention them", msg.count)
 		m.err = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("Some AIs could not be added: %s", api.HumanizeError(msg.err))
+		}
 		return m, openRoomCmd(m.client, m.chatID)
 
 	case createdChatMsg:
 		// Only used for create failures (success returns roomMsg).
 		m.chatCreating = false
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.err = api.HumanizeError(msg.err)
 			m.status = "Could not create chat"
 			m.screen = screenNewAI
 			return m, nil
@@ -1056,7 +1097,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case roomMsg:
 		m.chatCreating = false
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.err = api.HumanizeError(msg.err)
 			if m.chatID == "" {
 				m.screen = screenNewAI
 				m.status = "Could not create chat"
@@ -1074,7 +1115,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.members = msg.members
 		m.err = ""
 		m.status = ""
-		_ = config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle)
+		if err := config.BindWorkspace(m.workspaceDir, m.chatID, m.chatTitle); err != nil {
+			m.err = fmt.Sprintf("Chat opened, but local continue state could not be saved: %v", err)
+			m.status = "Local state not saved"
+		} else if msg.persistErr != nil {
+			m.err = fmt.Sprintf("Chat opened, but local state could not be saved: %v", msg.persistErr)
+			m.status = "Local state not saved"
+		}
 		m.composer.Focus()
 		m.refreshViewport()
 		m.viewport.GotoBottom()
@@ -1087,15 +1134,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wsClient = msg.client
 		m.wsEvents = msg.ch
 		m.live = "ws"
+		if m.screen == screenRoom {
+			m.status = "Live updates connected"
+		}
 		return m, nextWSCmd(m.wsEvents)
 
 	case wsReadyMsg:
 		if !msg.ok {
+			if m.wsClient != nil {
+				m.wsClient.Close()
+				m.wsClient = nil
+			}
 			m.live = "poll"
 			m.wsEvents = nil
-			return m, nil
+			if m.screen == screenRoom {
+				m.status = "Live updates disconnected; retrying…"
+			}
+			return m, wsRetryCmd()
 		}
 		return m, nil
+
+	case wsRetryMsg:
+		if m.creds == nil || m.screen == screenBoot || m.screen == screenLogin {
+			return m, nil
+		}
+		return m, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken)
 
 	case wsEventMsg:
 		if m.wsEvents == nil {
@@ -1103,7 +1166,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmd := nextWSCmd(m.wsEvents)
 		if realtime.IsToolRequest(msg.evt) {
-			if !m.workspaceOK || m.client == nil {
+			if m.client == nil {
+				m.status = "Ignored tool request: no active API session"
 				return m, cmd
 			}
 			var req tools.Request
@@ -1111,8 +1175,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Malformed tool request"
 				return m, cmd
 			}
-			if strings.TrimSpace(req.RequestID) == "" || strings.TrimSpace(req.ToolCallID) == "" {
-				m.status = "Tool request missing ids"
+			if err := validateToolRequestScope(m.screen, m.chatID, m.workspaceDir, msg.evt.ChatID, m.workspaceOK, req); err != nil {
+				m.status = "Ignored tool request: " + strings.TrimPrefix(err.Error(), "tool request is ")
 				return m, cmd
 			}
 			m.status = "Preparing workspace tool…"
@@ -1150,7 +1214,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sentMsg:
 		m.sending = false
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.err = api.HumanizeError(msg.err)
 			return m, nil
 		}
 		m.err = ""
@@ -1296,21 +1360,41 @@ func (m *model) applyMessages(incoming []api.ChatMessage) {
 
 func (m model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		return m, tea.Quit
-	case "g":
-		if m.loginFocus == 0 && m.loginEmail == "" {
-			m.status = "Opening Google…"
+	case "c":
+		if m.loginFocus == 0 {
+			m.loginEmail += "c"
+			return m, nil
+		}
+		if m.loginFocus == 1 {
+			m.loginPass += "c"
+			return m, nil
+		}
+		return m, nil
+	case "tab", "down":
+		m.loginFocus = (m.loginFocus + 1) % 4
+	case "shift+tab", "up":
+		m.loginFocus = (m.loginFocus + 3) % 4
+	case "enter":
+		if m.loginFocus == 2 {
+			m.status = "Opening browser sign-in…"
 			m.err = ""
 			return m, loginGoogleCmd()
 		}
-	case "tab", "down":
-		m.loginFocus = (m.loginFocus + 1) % 2
-	case "shift+tab", "up":
-		m.loginFocus = (m.loginFocus + 1) % 2
-	case "enter":
-		if strings.TrimSpace(m.loginEmail) == "" || m.loginPass == "" {
-			m.err = "Email and password required — or press g for Google"
+		if m.loginFocus == 3 {
+			m.status = "Opening account creation…"
+			m.err = ""
+			return m, signupCmd()
+		}
+		if strings.TrimSpace(m.loginEmail) == "" {
+			m.err = "Enter your email address, or choose Continue with Google."
+			m.loginFocus = 0
+			return m, nil
+		}
+		if m.loginPass == "" {
+			m.err = "Enter your password, or choose Continue with Google."
+			m.loginFocus = 1
 			return m, nil
 		}
 		m.status = "Signing in…"
@@ -1325,6 +1409,9 @@ func (m model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	default:
 		if len(msg.Runes) == 0 {
+			return m, nil
+		}
+		if m.loginFocus >= 2 {
 			return m, nil
 		}
 		ch := string(msg.Runes)
@@ -1723,7 +1810,7 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 	case "git", "status":
 		out, err := workspace.GitStatus(m.workspaceDir)
 		if err != nil {
-			m.err = err.Error()
+			m.err = api.HumanizeError(err)
 		} else {
 			m.status = "git status attached for next send"
 			m.focusFiles = nil
@@ -1739,7 +1826,7 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 	case "diff":
 		out, err := workspace.GitDiff(m.workspaceDir, "", true)
 		if err != nil {
-			m.err = err.Error()
+			m.err = api.HumanizeError(err)
 		} else {
 			m.attachTools = true
 			m.messages = append(m.messages, api.ChatMessage{AuthorName: "local", Role: "system", Body: "git diff --stat:\n" + out})
@@ -1754,7 +1841,7 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 		rel := parts[1]
 		content, err := workspace.ReadFile(m.workspaceDir, rel)
 		if err != nil {
-			m.err = err.Error()
+			m.err = api.HumanizeError(err)
 			return m, nil
 		}
 		m.focusFiles = appendUnique(m.focusFiles, filepath.Clean(rel))
@@ -1765,7 +1852,7 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.status = "Attached " + rel + " for next send"
 	case "trust":
 		if err := workspace.Trust(m.workspaceDir); err != nil {
-			m.err = err.Error()
+			m.err = api.HumanizeError(err)
 		} else {
 			m.workspaceOK = true
 			m.status = "Workspace trusted"
@@ -2014,11 +2101,15 @@ func (m model) View() string {
 func (m model) viewLogin() string {
 	w := max(m.width, 60)
 	banner := theme.Banner(w)
-	sub := theme.MutedText().Render("Same account. Same chats. From your repo.")
+	subText := "Sign in once. Use the same Salad chats from your repo."
+	if strings.TrimSpace(m.status) != "" {
+		subText = m.status
+	}
+	sub := theme.MutedText().Render(subText)
 	emailLabel, passLabel := "email", "password"
 	if m.loginFocus == 0 {
 		emailLabel = theme.Brand().Render("▸ email")
-	} else {
+	} else if m.loginFocus == 1 {
 		passLabel = theme.Brand().Render("▸ password")
 	}
 	emailVal := m.loginEmail
@@ -2029,13 +2120,22 @@ func (m model) viewLogin() string {
 	if passVal == "" {
 		passVal = theme.MutedText().Render("••••••••")
 	}
-	form := theme.Composer().Width(min(w-4, 56)).Render(fmt.Sprintf("%s\n%s\n\n%s\n%s\n", emailLabel, emailVal, passLabel, passVal))
+	google := "  Continue with Google"
+	if m.loginFocus == 2 {
+		google = theme.Brand().Render("▸ Continue with Google")
+	}
+	account := "  Create a Salad account in your browser"
+	if m.loginFocus == 3 {
+		account = theme.Brand().Render("▸ Create a Salad account in your browser")
+	}
+	form := theme.Composer().Width(min(w-4, 56)).Render(fmt.Sprintf("%s\n%s\n\n%s\n%s\n\n%s\n%s", emailLabel, emailVal, passLabel, passVal, google, account))
 	errLine := ""
 	if m.err != "" {
 		errLine = "\n" + theme.Error().Render(m.err)
 	}
-	help := theme.Footer().Render("enter sign in · g Google · tab · q")
-	return lipgloss.JoinVertical(lipgloss.Left, banner, "", sub, "", form, errLine, "", help)
+	accountHint := theme.MutedText().Render("New to Salad? Select account creation above, then return here to sign in.")
+	help := theme.Footer().Render("↑↓ or Tab move · Enter choose · Ctrl+C quit")
+	return lipgloss.JoinVertical(lipgloss.Left, banner, "", sub, "", form, accountHint, errLine, "", help)
 }
 
 func (m model) viewChats() string {

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -147,6 +150,75 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("%s (%d): %s", e.Code, e.Status, e.Message)
 	}
 	return fmt.Sprintf("http %d: %s", e.Status, e.Message)
+}
+
+// HumanizeError turns transport and API failures into a message suitable for
+// a person at a terminal. The wire status and Salad error code remain
+// available through --debug; they are not useful as the primary UX.
+func HumanizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Code {
+		case "AUTH_INVALID_CREDENTIALS":
+			return "The email or password is not correct. Check it and try again."
+		case "AUTH_TOKEN_REQUIRED", "TOKEN_INVALID", "AUTH_TOKEN_INVALID":
+			return "Your Salad sign-in has expired. Run `salad login` to sign in again."
+		case "AUTH_RATE_LIMITED", "RATE_LIMITED":
+			return "Too many sign-in attempts. Wait a few minutes, then try again."
+		case "CHAT_NOT_FOUND", "NOT_FOUND":
+			return "That chat was not found or you no longer have access to it."
+		case "FORBIDDEN", "AUTH_FORBIDDEN":
+			return "You do not have permission to do that."
+		case "AUTH_INVALID_REQUEST_BODY":
+			return "Salad could not understand that sign-in request. Update Salad Terminal and try again."
+		}
+		if apiErr.Status == http.StatusTooManyRequests {
+			return "Salad is receiving too many requests. Wait a moment, then try again."
+		}
+		if apiErr.Status == http.StatusUnauthorized {
+			return "Your Salad sign-in is not valid. Run `salad login` and try again."
+		}
+		if apiErr.Status == http.StatusForbidden {
+			return "You do not have permission to do that."
+		}
+		if apiErr.Status >= 500 {
+			return "Salad is temporarily unavailable. Try again in a moment."
+		}
+		if message := safeAPIMessage(apiErr.Message); message != "" {
+			return message
+		}
+		return "Salad could not complete that request. Try again."
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "Salad took too long to respond. Check your connection and try again."
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return "Could not reach Salad. Check your internet connection and try again."
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return "Could not reach Salad. Check your internet connection and try again."
+	}
+	message := strings.TrimSpace(err.Error())
+	if strings.Contains(message, "secure credential store unavailable") {
+		return "Could not save your sign-in securely. Unlock your system credential store and try again."
+	}
+	if strings.Contains(message, "workspace not trusted") {
+		return "This repository is not trusted yet. Run `salad workspace trust` in the repository first."
+	}
+	return message
+}
+
+func safeAPIMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" || len(message) > 240 || strings.HasPrefix(message, "{") || strings.HasPrefix(message, "[") {
+		return ""
+	}
+	return message
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte, error) {
@@ -353,7 +425,27 @@ func (c *Client) Me(ctx context.Context) (*User, error) {
 	if wrapped.User.ID != "" || wrapped.User.Email != "" {
 		return &wrapped.User, nil
 	}
-	return &wrapped.Me, nil
+	if wrapped.Me.ID != "" || wrapped.Me.Email != "" {
+		return &wrapped.Me, nil
+	}
+	return nil, fmt.Errorf("sign-in response did not contain an account")
+}
+
+// Probe checks the public readiness endpoint without requiring authentication.
+func (c *Client) Probe(ctx context.Context) error {
+	_, err := c.do(ctx, http.MethodGet, "/health/ready", nil)
+	return err
+}
+
+func escapedPathSegment(label, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", label)
+	}
+	if strings.ContainsAny(value, "/?#") {
+		return "", fmt.Errorf("invalid %s", label)
+	}
+	return url.PathEscape(value), nil
 }
 
 func (c *Client) Bootstrap(ctx context.Context) (*BootstrapResponse, error) {
@@ -363,7 +455,11 @@ func (c *Client) Bootstrap(ctx context.Context) (*BootstrapResponse, error) {
 }
 
 func (c *Client) ChatBootstrap(ctx context.Context, chatID string) (*ChatBootstrapResponse, error) {
-	payload, err := c.do(ctx, http.MethodGet, "/api/mobile/chats/"+chatID+"/bootstrap", nil)
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := c.do(ctx, http.MethodGet, "/api/mobile/chats/"+escapedChatID+"/bootstrap", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -393,10 +489,15 @@ func (c *Client) ChatBootstrap(ctx context.Context, chatID string) (*ChatBootstr
 // ListMessages fetches chat history (newest page, chronological).
 // limit defaults to 100 (API max). beforeMessageID loads older messages.
 func (c *Client) ListMessages(ctx context.Context, chatID string, beforeMessageID string) ([]ChatMessage, error) {
-	path := fmt.Sprintf("/api/chats/%s/messages?limit=100", chatID)
-	if before := strings.TrimSpace(beforeMessageID); before != "" {
-		path += "&before=" + before
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return nil, err
 	}
+	query := url.Values{"limit": {"100"}}
+	if before := strings.TrimSpace(beforeMessageID); before != "" {
+		query.Set("before", before)
+	}
+	path := "/api/chats/" + escapedChatID + "/messages?" + query.Encode()
 	payload, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -409,10 +510,14 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string) (*Chat
 }
 
 func (c *Client) SendMessageRequest(ctx context.Context, chatID string, req SendMessageRequest) (*ChatMessage, error) {
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return nil, err
+	}
 	if req.ClientMessageID == "" {
 		req.ClientMessageID = fmt.Sprintf("term-%d", time.Now().UnixNano())
 	}
-	payload, err := c.do(ctx, http.MethodPost, "/api/chats/"+chatID+"/messages", req)
+	payload, err := c.do(ctx, http.MethodPost, "/api/chats/"+escapedChatID+"/messages", req)
 	if err != nil {
 		return nil, err
 	}
@@ -435,6 +540,23 @@ type ToolResultRequest struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type HarnessRunEventRequest struct {
+	ChatID      string `json:"chat_id"`
+	RunID       string `json:"run_id"`
+	WorkspaceID string `json:"workspace_id"`
+	Status      string `json:"status"`
+	Summary     string `json:"summary,omitempty"`
+	Sequence    int64  `json:"sequence,omitempty"`
+}
+
+func (c *Client) PostHarnessRunEvent(ctx context.Context, req HarnessRunEventRequest) error {
+	if strings.TrimSpace(req.ChatID) == "" || strings.TrimSpace(req.RunID) == "" || strings.TrimSpace(req.WorkspaceID) == "" {
+		return fmt.Errorf("chat_id, run_id, and workspace_id are required")
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/harness/events", req)
+	return err
+}
+
 func (c *Client) PostToolResult(ctx context.Context, req ToolResultRequest) error {
 	if strings.TrimSpace(req.RequestID) == "" || strings.TrimSpace(req.ToolCallID) == "" {
 		return fmt.Errorf("request_id and tool_call_id required")
@@ -444,7 +566,11 @@ func (c *Client) PostToolResult(ctx context.Context, req ToolResultRequest) erro
 }
 
 func (c *Client) ListMembers(ctx context.Context, chatID string) ([]map[string]any, error) {
-	payload, err := c.do(ctx, http.MethodGet, "/api/chats/"+chatID+"/members", nil)
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := c.do(ctx, http.MethodGet, "/api/chats/"+escapedChatID+"/members", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -488,10 +614,14 @@ func (c *Client) ListAIProducts(ctx context.Context) ([]AIProduct, error) {
 // AddAIMember adds an AI to an existing Salad chat (same as web Add Member).
 func (c *Client) AddAIMember(ctx context.Context, chatID, productSlug string) error {
 	productSlug = strings.TrimSpace(productSlug)
-	if chatID == "" || productSlug == "" {
+	escapedChatID, err := escapedPathSegment("chat id", chatID)
+	if err != nil {
+		return err
+	}
+	if productSlug == "" {
 		return fmt.Errorf("chat id and ai product slug required")
 	}
-	_, err := c.do(ctx, http.MethodPost, "/api/chats/"+chatID+"/members", map[string]any{
+	_, err = c.do(ctx, http.MethodPost, "/api/chats/"+escapedChatID+"/members", map[string]any{
 		"member_type":     "ai",
 		"ai_product_slug": productSlug,
 	})

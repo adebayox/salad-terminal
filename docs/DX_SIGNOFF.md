@@ -39,7 +39,21 @@ Findings: the harness works across every tool-capable model family (Anthropic, O
 
 **Git tools — LIVE VERIFIED (2026-08-04, backend `28b7426` deployed to staging):** drove the real TUI against the deployed backend; the AI's advertised tool list on a terminal turn is `read_file, search_codebase, list_directory, get_diagnostics, apply_edit, run_command, git_status, git_diff, git_log`; the model called `git_log` as a tool, the terminal auto-ran it (`cf590a4 (HEAD -> master) initial`, POST /api/tools/result 200), plus apply_edit (approved → file fixed) and run_command `go run bug.go` → `6`. Chat `6a71c64b6e19ebd864ad2175`.
 
-**Not claimed:** web-app-side flows signed off separately in saladBE; production default API still staging per contract.
+**Not claimed:** web-app-side flows signed off separately in saladBE. This document records the staging harness verification; public CLI release verification is recorded below.
+
+## Public CLI release verification (2026-08-12)
+
+Release `v0.2.5` supersedes `v0.2.4` after the release re-audit. It includes
+the hardened terminal branch after local
+unit tests, race tests, vet, six cross-platform builds, and GitHub Actions
+release tests passed. All six public archives matched `SHA256SUMS`; the
+macOS arm64 installer installed the binary and `salad doctor` reached the
+production readiness endpoint.
+
+The first-run sign-in screen was also driven through a real PTY. Email,
+password, Google sign-in, and account creation are visible focusable actions;
+email characters such as `c` remain ordinary input. Account creation no longer
+depends on a hidden shortcut.
 
 ## Earlier signoff (2026-07-18)
 
@@ -54,7 +68,7 @@ Findings: the harness works across every tool-capable model family (Anthropic, O
 |---|---|---|
 | Salad-feeling TUI | Pass | Login → chat list → room with user bubbles + AI headers |
 | Email login | Pass | `salad whoami` as codex-live-qa |
-| Browser Google login | Implemented | `salad login --google` PKCE loopback; requires Google console redirect URI for `http://127.0.0.1:<port>/callback` |
+| Browser Google login | Implemented | `salad login --google` uses Salad's backend browser callback and a loopback return; production entry and error/cancel/timeout handling were verified, but a full Google account return was not completed in this session. |
 | Live updates | Pass | Go `salad.v1` websocket connects; room also polls as fallback |
 | `@` mention picker | Pass | TUI opens Mention UI on `@`; send with `@gpt-5.4` returned `MATRIX_173153` |
 | Turn-scoped local tools | Pass | Trusted workspace attaches `code_context` on send; `/git` `/diff` `/read` `/trust`; `.env` blocked |
@@ -77,11 +91,10 @@ Findings: the harness works across every tool-capable model family (Anthropic, O
 - Secrets ignore path works without printing secret material
 - WS failure mode falls back to poll (Python clients that spoof Origin get 403; CLI does not)
 
-## Not claimed
+## Remaining product limits
 
-- Production default API (still staging per contract)
-- Google OAuth end-to-end in this session (needs redirect URI allowlisted on the Google client)
-- Websocket token streaming chunks rendered token-by-token (events refresh transcript; no character stream UI yet)
+- A full Google account return still needs a real Google test account in the browser session; the terminal flow has explicit cancel, timeout, state, and backend-error handling.
+- Websocket token streaming chunks are not rendered character-by-character; events refresh the transcript and polling remains the fallback.
 
 ## CTO verdict
 
@@ -89,4 +102,4 @@ Findings: the harness works across every tool-capable model family (Anthropic, O
 A developer can `cd repo && ./salad`, sign in, pick a real Salad chat, `@` an AI, send with local workspace context, and see the reply in the same thread as the web app.
 
 Would a staff engineer approve this for **staging** Terminal use? **Yes.**  
-Production cutover: only after Google redirect URI is configured for the shipping OAuth client and a short prod soak with a real user account.
+Public release: `v0.2.5` uses the production API by default. Staging remains available only through `SALAD_API_URL` for QA; signup and recovery follow that same environment.

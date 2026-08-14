@@ -1,7 +1,6 @@
 package realtime
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -49,15 +48,7 @@ func (c *Client) wsURL() (string, error) {
 		return "", fmt.Errorf("unsupported scheme %q", u.Scheme)
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/api/ws"
-	q := u.Query()
-	q.Set("token", c.token)
-	u.RawQuery = q.Encode()
 	return u.String(), nil
-}
-
-func authProtocol(token string) string {
-	enc := base64.RawURLEncoding.EncodeToString([]byte(token))
-	return "salad.auth." + enc
 }
 
 // Connect dials salad.v1 and returns a channel of events. Caller should cancel by Close().
@@ -67,13 +58,14 @@ func (c *Client) Connect() (<-chan Event, error) {
 		return nil, err
 	}
 	dialer := websocket.Dialer{
-		Subprotocols:     []string{"salad.v1", authProtocol(c.token)},
+		Subprotocols:     []string{"salad.v1"},
 		HandshakeTimeout: 15 * time.Second,
 	}
 	// Never send a browser Origin. Empty Origin is allowed by SaladBE CheckOrigin
 	// and avoids Cloudflare/proxy rejecting CLI clients as foreign web origins.
 	header := http.Header{}
 	header.Del("Origin")
+	header.Set("Authorization", "Bearer "+c.token)
 	conn, resp, err := dialer.Dial(endpoint, header)
 	if err != nil {
 		if resp != nil {
@@ -146,7 +138,10 @@ func (c *Client) pingLoop() {
 		if closed || conn == nil {
 			return
 		}
-		_ = conn.WriteJSON(map[string]any{"type": "ping", "ts": time.Now().Unix()})
+		if err := conn.WriteJSON(map[string]any{"type": "ping", "ts": time.Now().Unix()}); err != nil {
+			c.Close()
+			return
+		}
 	}
 }
 

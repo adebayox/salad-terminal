@@ -37,11 +37,12 @@ try {
   New-Item -ItemType Directory -Force -Path $binDir | Out-Null
   Copy-Item -Force $binary (Join-Path $binDir 'salad.exe')
   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  if (-not $userPath) { $userPath = '' }
   if (($userPath -split ';') -notcontains $binDir) {
     [Environment]::SetEnvironmentVariable('Path', (($userPath.TrimEnd(';') + ';' + $binDir).Trim(';')), 'User')
   }
   Write-Host "Installed: $binDir\salad.exe"
-  Write-Host 'Open a new PowerShell window, then run: salad login --google'
+  Write-Host 'Open a new PowerShell window, then run: salad'
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

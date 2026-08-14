@@ -14,9 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/salad-ai/salad-terminal/internal/config"
+	"golang.org/x/term"
 )
-
-const trustFileName = ".salad-trust"
 
 // ResolveRoot returns an absolute, symlink-canonicalized workspace root.
 // Canonicalization keeps trust keys consistent: os.Getwd() already returns the
@@ -50,10 +49,6 @@ func OpaqueID(root string) (string, error) {
 	}
 	sum := sha256.Sum256([]byte(root))
 	return hex.EncodeToString(sum[:16]), nil
-}
-
-func trustPath(root string) string {
-	return filepath.Join(root, trustFileName)
 }
 
 func trustedWorkspacesPath() (string, error) {
@@ -113,12 +108,8 @@ func IsTrusted(root string) bool {
 	if err != nil {
 		return false
 	}
-	if set, err := loadTrustedWorkspaces(); err == nil && set[root] {
-		return true
-	}
-	// Backward compatible: in-repo marker from earlier Terminal builds.
-	_, err = os.Stat(trustPath(root))
-	return err == nil
+	set, err := loadTrustedWorkspaces()
+	return err == nil && set[root]
 }
 
 func Trust(root string) error {
@@ -141,6 +132,9 @@ func EnsureTrusted(root string) (string, error) {
 	}
 	if IsTrusted(root) {
 		return root, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("this repository is not trusted; run `salad workspace trust` in a terminal first")
 	}
 	fmt.Printf("Trust this workspace for local Salad tools?\n  %s\n[y/N] ", root)
 	reader := bufio.NewReader(os.Stdin)
@@ -486,7 +480,7 @@ func PermissionsSummary(root string) (string, error) {
 	fmt.Fprintf(&b, "tools: apply_edit (diff approval), run_command (bounded, approval), get_diagnostics (n/a)\n")
 	fmt.Fprintf(&b, "run_command: no shell (argv only), metachars rejected, workspace-bounded cwd, 60s timeout, output capped, secret env stripped\n")
 	fmt.Fprintf(&b, "project memory: SALAD.md / CLAUDE.md at workspace root\n")
-	fmt.Fprintf(&b, "trust store: config-dir trusted_workspaces.json (legacy .salad-trust still honored)\n")
+	fmt.Fprintf(&b, "trust store: config-dir trusted_workspaces.json (explicit trust required)\n")
 	fmt.Fprintf(&b, "ignore patterns:\n")
 	for _, p := range loadSaladIgnore(root) {
 		fmt.Fprintf(&b, "  - %s\n", p)

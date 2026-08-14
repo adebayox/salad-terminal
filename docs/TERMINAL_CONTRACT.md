@@ -59,8 +59,8 @@ ACK migration.
 ## Local tools (harness — Phase 1 read-only, Phase 2 edit, Phase 3 commands)
 
 1. Workspace trust prompt for the cwd (or `--workspace`). Trust is stored in the
-   config dir (`trusted_workspaces.json`); legacy in-repo `.salad-trust` is still
-   honored. Workspace roots are symlink-canonicalized so a trust recorded through
+   config dir (`trusted_workspaces.json`). Legacy in-repo `.salad-trust` files do
+   not grant trust. Workspace roots are symlink-canonicalized so a trust recorded through
    a symlinked path matches the physical path the process resolves.
 2. Respect `.saladignore` + default deny for secrets/env files. Symlinks are
    resolved and re-checked against the workspace root before any read/write.
@@ -95,8 +95,9 @@ ACK migration.
 - Replacing Ink/canvas `code_execution` or capability receipts
 - Staging → production rollout before collaboration matrix passes
 
-## Staging rule
+## Release rule
 
-Ship Terminal collaboration experiments against **staging only** until the
-equal-surface matrix (login, resume chat, send, participants, local tools on
-terminal turns only) passes.
+The public release uses `https://api.salad.ink`. Use
+`SALAD_API_URL=https://api-staging.salad.ink` only for QA or feature work that
+has not been promoted. Staging and production credentials, chats, and release
+checks must remain separate.
