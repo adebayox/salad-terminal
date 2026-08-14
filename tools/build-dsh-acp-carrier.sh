@@ -91,11 +91,17 @@ if [[ -z "$carrier" ]]; then
   exit 1
 fi
 
-install -m 700 "$carrier" "$output_dir/dsh-acp-agent-$platform"
+release_platform="$platform"
+if [[ "$release_platform" == "macos" ]]; then
+  # DeepSeek uses "macos" in its pkg target; Salad release artifacts use
+  # the same darwin label as the terminal binary and installer.
+  release_platform="darwin"
+fi
+install -m 700 "$carrier" "$output_dir/dsh-acp-agent-$release_platform-${target##*-}"
 install -m 600 examples/acp-agent/cordis.yml "$output_dir/cordis.yml"
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$output_dir" && sha256sum "dsh-acp-agent-$platform" > SHA256SUMS)
+  (cd "$output_dir" && sha256sum "dsh-acp-agent-$release_platform-${target##*-}" > SHA256SUMS)
 else
-  (cd "$output_dir" && shasum -a 256 "dsh-acp-agent-$platform" > SHA256SUMS)
+  (cd "$output_dir" && shasum -a 256 "dsh-acp-agent-$release_platform-${target##*-}" > SHA256SUMS)
 fi
-echo "Built $output_dir/dsh-acp-agent-$platform"
+echo "Built $output_dir/dsh-acp-agent-$release_platform-${target##*-}"
