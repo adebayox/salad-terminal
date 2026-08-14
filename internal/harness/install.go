@@ -2,12 +2,14 @@ package harness
 
 import (
 	"crypto/sha256"
+	"debug/macho"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -146,6 +148,10 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 	if err := copyFileAtomic(sourceRuntime, runtimePath, 0o700); err != nil {
 		return "", fmt.Errorf("install runtime: %w", err)
 	}
+	if err := signMacOSMachO(runtimePath); err != nil {
+		_ = os.Remove(runtimePath)
+		return "", err
+	}
 
 	installedConfig := ""
 	if sourceConfig != "" {
@@ -169,6 +175,33 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 		return "", fmt.Errorf("write harness install record: %w", err)
 	}
 	return runtimePath, nil
+}
+
+// signMacOSMachO gives downloaded command-line Mach-O carriers a local
+// identity before first execution. macOS can kill an unsigned downloaded
+// executable before it starts; this ad-hoc signature does not claim Apple
+// notarization or publisher trust, but makes the managed local carrier usable.
+// Release checksums are verified before Install is called, and the manifest
+// records the post-signing bytes that Salad will execute.
+func signMacOSMachO(path string) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	file, err := macho.Open(path)
+	if err != nil {
+		return nil
+	}
+	_ = file.Close()
+
+	output, err := exec.Command("codesign", "--force", "--sign", "-", path).CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			return fmt.Errorf("sign macOS harness runtime: %w", err)
+		}
+		return fmt.Errorf("sign macOS harness runtime: %w: %s", err, message)
+	}
+	return nil
 }
 
 // Rollback restores the last managed runtime saved by a forced install. It is
