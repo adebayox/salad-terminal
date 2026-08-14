@@ -99,11 +99,15 @@ if [[ "$release_platform" == "macos" ]]; then
   # the same darwin label as the terminal binary and installer.
   release_platform="darwin"
 fi
-install -m 700 "$carrier" "$output_dir/dsh-acp-agent-$release_platform-$target_arch"
+release_arch="$target_arch"
+if [[ "$release_arch" == "x64" ]]; then
+  release_arch="amd64"
+fi
+install -m 700 "$carrier" "$output_dir/dsh-acp-agent-$release_platform-$release_arch"
 install -m 600 examples/acp-agent/cordis.yml "$output_dir/cordis.yml"
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$output_dir" && sha256sum "dsh-acp-agent-$release_platform-$target_arch" > SHA256SUMS)
+  (cd "$output_dir" && sha256sum "dsh-acp-agent-$release_platform-$release_arch" > SHA256SUMS)
 else
-  (cd "$output_dir" && shasum -a 256 "dsh-acp-agent-$release_platform-$target_arch" > SHA256SUMS)
+  (cd "$output_dir" && shasum -a 256 "dsh-acp-agent-$release_platform-$release_arch" > SHA256SUMS)
 fi
-echo "Built $output_dir/dsh-acp-agent-$release_platform-$target_arch"
+echo "Built $output_dir/dsh-acp-agent-$release_platform-$release_arch"
