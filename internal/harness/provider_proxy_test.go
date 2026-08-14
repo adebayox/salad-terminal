@@ -149,6 +149,83 @@ func TestProviderProxyReusesSaladClientTransport(t *testing.T) {
 	}
 }
 
+func TestProviderProxySurfacesStreamProviderErrors(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"error\":{\"code\":\"HARNESS_PROVIDER_REQUEST_FAILED\"}}\n\ndata: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	client := api.New(upstream.URL, "salad-token")
+	proxy, err := StartProviderProxy(context.Background(), client, "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = proxy.Close(ctx)
+	}()
+
+	apiKey := strings.TrimPrefix(strings.Split(proxy.Environment()[0], "=")[1], "")
+	req, err := http.NewRequest(http.MethodPost, proxy.BaseURL()+"/v1/chat/completions", strings.NewReader(`{"stream":true,"messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("proxy error status = %d, want %d", response.StatusCode, http.StatusBadGateway)
+	}
+	body, _ := io.ReadAll(response.Body)
+	if !strings.Contains(string(body), "HARNESS_PROVIDER_REQUEST_FAILED") {
+		t.Fatalf("proxy error body = %s", body)
+	}
+}
+
+func TestProviderProxyForwardsStreamSuccess(t *testing.T) {
+	const streamBody = ": keepalive\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, streamBody)
+	}))
+	defer upstream.Close()
+
+	client := api.New(upstream.URL, "salad-token")
+	proxy, err := StartProviderProxy(context.Background(), client, "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = proxy.Close(ctx)
+	}()
+
+	apiKey := strings.TrimPrefix(strings.Split(proxy.Environment()[0], "=")[1], "")
+	req, err := http.NewRequest(http.MethodPost, proxy.BaseURL()+"/v1/chat/completions", strings.NewReader(`{"stream":true,"messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("proxy stream status = %d, want 200", response.StatusCode)
+	}
+	body, _ := io.ReadAll(response.Body)
+	if string(body) != streamBody {
+		t.Fatalf("proxy stream body = %q, want %q", body, streamBody)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
