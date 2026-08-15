@@ -572,7 +572,12 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Re-ran the corrected release workflow `31898839394` after making the
   Linux loopback limitation explicit; terminal archives, carrier builds, and
   both native Linux carrier smoke jobs passed.
-- [ ] Add native Windows
-  installer/runtime evidence. DeepSeek's pinned carrier builder currently
-  supports Linux/macOS only, so Windows engineer mode still needs an explicit
-  product/runtime decision rather than a misleading partial install.
+- [x] Native Windows runner evidence passed in release workflow
+  `31899990278`: the Windows terminal archive executed, engineer help stated
+  that normal Salad Chat is a separate path, and `harness doctor` reported the
+  missing DSH carrier explicitly. This validates the Windows terminal
+  boundary; it does not claim Windows engineer runtime support.
+- [ ] Add a native Windows DSH carrier and engineer runtime. DeepSeek's pinned
+  carrier builder currently supports Linux/macOS only, so Windows engineer
+  mode still needs an explicit product/runtime decision rather than a
+  misleading partial install.
