@@ -220,6 +220,16 @@ jobs:
             exit 1
           }
 
+      - name: Probe Linux loopback behavior
+        run: |
+          set -euo pipefail
+          if ! bwrap --ro-bind / / --dev /dev --proc /proc --die-with-parent --unshare-net \
+            -- python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(1); port=s.getsockname()[1]; c=socket.create_connection(("127.0.0.1", port), 2); peer,_=s.accept(); peer.close(); c.close(); print("loopback-ok")' \
+            | grep -qx loopback-ok; then
+            echo 'Linux deny namespace does not currently support a localhost bind/connect probe' >&2
+            exit 1
+          fi
+
       - name: Boot packaged Linux carrier through ACP
         run: |
           set -euo pipefail
