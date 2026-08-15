@@ -505,3 +505,22 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [ ] Do not call the engineer terminal production-ready until the four
   durable work items above have evidence. Normal Salad Chat remains outside
   the harness path and has no changed files.
+
+### Loopback developer-flow correction (2026-08-15)
+
+- [x] Reproduced the real v0.2.15 developer flow from the exact installed
+  release. Collaboration, edit/test/build, persistent PTY, and cleanup work;
+  default-deny networking incorrectly blocked even a localhost dev server.
+- [x] Added explicit `--network loopback` mode. It prompts visibly, allows
+  model-controlled processes to bind/connect to localhost, and keeps external
+  network access denied. `--network allow` remains the broader, separately
+  approved mode.
+- [x] Rebuilt the pinned macOS carrier from the audited DeepSeek source and
+  verified the candidate against the real Node project: localhost HTTP passed,
+  an external HTTPS probe failed under the candidate Seatbelt policy, and
+  closing the PTY closed the port. Restored the exact v0.2.15 managed carrier
+  after the test.
+- [ ] Publish the loopback correction only after release CI and a clean exact
+  release install reproduce this matrix; native Linux loopback, Windows
+  runtime, domain allowlisting, package provenance, reconnect/replay, and
+  browser receipt work remain open.

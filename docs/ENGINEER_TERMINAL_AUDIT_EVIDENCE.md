@@ -30,10 +30,11 @@ chat, TUI, or SaladBE files were changed in this audit.
   official persistent terminal/job tools: it started a Python server on port
   8767, an external `curl` received HTTP 200, job control stopped it, and an
   external check confirmed the port was closed.
-- The default network-deny policy refused the first socket attempt. Repeating
-  with `--network allow` showed the explicit approval prompt, after which the
-  server worked. The authenticated provider bridge also completed a real
-  model turn through the candidate carrier.
+- The default network-deny policy refused the first socket attempt. The
+  corrected candidate now uses explicit `--network loopback` approval for a
+  local server: localhost HTTP passed while an external HTTPS probe failed
+  under the Seatbelt profile. The authenticated provider bridge also completed
+  a real model turn through the candidate carrier.
 - `salad engineer resume <run-id>` restored the same ACP conversation in a
   second process. The terminal conversation resumed, but the old OS process
   did not: closing the carrier correctly cleans up child processes. This is a

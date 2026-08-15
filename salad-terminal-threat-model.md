@@ -50,9 +50,10 @@ changed.
   provider bridge protects the Salad token, but it does not protect project
   secrets that DSH can read.
 - Required follow-up: reproduce the same enforced boundary on Linux and
-  Windows, add explicit per-session network approval/allowlisting, and test
-  subagents and persistent terminals against it. `DSH_NETWORK_MODE=allow`
-  remains a deliberate escape hatch and is not a release-safe default.
+  Windows, add domain-level external network allowlisting, and test subagents
+  and persistent terminals against it. `DSH_NETWORK_MODE=loopback` is now the
+  narrow local-server capability; `allow` remains a deliberate broader escape
+  hatch and is not a release-safe default.
 - Release decision: the original macOS P1 is fixed in the rebuilt carrier;
   the cross-platform release gate remains open.
 

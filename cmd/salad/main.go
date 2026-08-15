@@ -435,11 +435,12 @@ func runHarnessMode(args []string, interactive bool) error {
 	if interactive && protocol != "acp" {
 		return errors.New("salad engineer uses the ACP session runtime; jsonrpc is available only through `salad harness`")
 	}
-	if networkMode != "deny" && networkMode != "allow" {
-		return fmt.Errorf("unsupported harness network mode %q; choose deny or allow", networkMode)
+	if networkMode != "deny" && networkMode != "loopback" && networkMode != "allow" {
+		return fmt.Errorf("unsupported harness network mode %q; choose deny, loopback, or allow", networkMode)
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("DSH_NETWORK_MODE")), "allow") && !networkExplicit {
-		return fmt.Errorf("network access is denied by default; pass `--network allow` to request it for this run")
+	parentNetworkMode := strings.ToLower(strings.TrimSpace(os.Getenv("DSH_NETWORK_MODE")))
+	if (parentNetworkMode == "allow" || parentNetworkMode == "loopback") && !networkExplicit {
+		return fmt.Errorf("network access is denied by default; pass `--network %s` to request it for this run", parentNetworkMode)
 	}
 	if len(prompt) == 0 {
 		if !interactive {
@@ -454,6 +455,17 @@ func runHarnessMode(args []string, interactive bool) error {
 		return err
 	}
 	input := io.Reader(os.Stdin)
+	if networkMode == "loopback" {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Fprintln(os.Stderr, "Local-only network access lets model-controlled commands bind and connect to localhost, but not the internet.")
+		fmt.Fprint(os.Stderr, "Enable loopback-only network for this run? [y/N] ")
+		line, readErr := reader.ReadString('\n')
+		answer := strings.ToLower(strings.TrimSpace(line))
+		if readErr != nil || (answer != "y" && answer != "yes") {
+			return errors.New("loopback network access was not enabled")
+		}
+		input = reader
+	}
 	if networkMode == "allow" {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Fprintln(os.Stderr, "Network access lets model-controlled commands contact the internet and may expose workspace data.")
@@ -490,8 +502,8 @@ func runHarnessMode(args []string, interactive bool) error {
 	if protocol == "jsonrpc" && configPath != "" {
 		opts.Env = []string{"DSH_CORDIS_CONFIG=" + configPath}
 	}
-	if networkMode == "allow" {
-		opts.Env = append(opts.Env, "DSH_NETWORK_MODE=allow")
+	if networkMode != "deny" {
+		opts.Env = append(opts.Env, "DSH_NETWORK_MODE="+networkMode)
 	}
 	var providerClient *api.Client
 	var providerProxy *harness.ProviderProxy
@@ -1025,7 +1037,7 @@ or change your normal Salad chat. "salad harness doctor" checks the setup.
   --protocol <name>       acp (default) or jsonrpc compatibility mode
   --provider <name>       DSH provider (or SALAD_DSH_PROVIDER)
   --model <name>          DSH model (or SALAD_DSH_MODEL)
-  --network <mode>        deny (default) or allow, with a confirmation prompt
+  --network <mode>        deny (default), loopback, or allow; prompts for access
   --salad-provider <name> Salad provider for the authenticated local bridge
   --session <id>          Reuse a JSON-RPC session across runs
   --chat <id>             Share run start/finish with this Salad chat

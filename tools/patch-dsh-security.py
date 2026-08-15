@@ -24,13 +24,15 @@ replace_once(
     """  const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--die-with-parent']
   // This profile wraps model-controlled shell processes. The DSH provider
   // remains in the parent process and keeps its loopback bridge.
-  if (process.env.DSH_NETWORK_MODE !== 'allow') args.push('--unshare-net')""",
+  const networkMode = process.env.DSH_NETWORK_MODE ?? 'deny'
+  if (networkMode !== 'allow') args.push('--unshare-net')""",
     "Linux shell network isolation",
 )
 replace_once(
     profile,
     "  return landlockGrantArgs({ readOnly: ['/'], readWrite })",
-    """  if (process.env.DSH_NETWORK_MODE !== 'allow') {
+    """  const networkMode = process.env.DSH_NETWORK_MODE ?? 'deny'
+  if (networkMode !== 'allow') {
     throw new Error('DSH network-deny policy requires bubblewrap on Linux; Landlock cannot enforce network isolation')
   }
   return landlockGrantArgs({ readOnly: ['/'], readWrite })""",
@@ -40,7 +42,15 @@ replace_once(
     profile,
     "  const forms = ['(version 1)', '(allow default)', '(deny file-write*)', `(allow file-write* (literal ${sbplString('/dev/null')}))`]",
     """  const forms = ['(version 1)', '(allow default)', '(deny file-write*)']
-  if (process.env.DSH_NETWORK_MODE !== 'allow') forms.push('(deny network*)')
+  const networkMode = process.env.DSH_NETWORK_MODE ?? 'deny'
+  if (networkMode !== 'allow') forms.push('(deny network*)')
+  if (networkMode === 'loopback') {
+    // Local development servers need a narrow exception without granting the
+    // model internet access.
+    forms.push('(allow network-bind (local ip "localhost:*"))')
+    forms.push('(allow network-inbound (local ip "localhost:*"))')
+    forms.push('(allow network-outbound (remote ip "localhost:*"))')
+  }
   // The shell can address absolute paths, so protect credential-shaped
   // locations globally rather than only below the trusted workspace.
   // Keep this as simple alternatives: Seatbelt's regex parser treats some
