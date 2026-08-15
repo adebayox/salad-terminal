@@ -615,6 +615,9 @@ func runHarnessMode(args []string, interactive bool) error {
 			summary = "Harness run cancelled"
 		}
 	}
+	if err != nil {
+		printHarnessProviderRecovery(surface, saladProvider, err)
+	}
 	runRecord.Status = status
 	runRecord.UpdatedAt = time.Now().UTC()
 	runRecord.FinishedAt = runRecord.UpdatedAt
@@ -627,6 +630,25 @@ func runHarnessMode(args []string, interactive bool) error {
 	}
 	postHarnessEventWithSequence(context.Background(), providerClient, chatID, runID, workspaceID, status, summary, 3)
 	return err
+}
+
+func printHarnessProviderRecovery(surface, selectedProvider string, err error) {
+	message := harnessProviderRecoveryMessage(surface, selectedProvider, err)
+	if message == "" {
+		return
+	}
+	fmt.Fprintln(os.Stderr, message)
+}
+
+func harnessProviderRecoveryMessage(surface, selectedProvider string, err error) string {
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "provider") && !strings.Contains(message, "http 502") {
+		return ""
+	}
+	if strings.TrimSpace(selectedProvider) == "" {
+		return fmt.Sprintf("[%s] Salad's default model provider failed. Retry with --salad-provider <name> or SALAD_HARNESS_PROVIDER=<name>.", surface)
+	}
+	return fmt.Sprintf("[%s] Salad provider %q failed. Check that provider's Salad configuration or retry with another --salad-provider value.", surface, selectedProvider)
 }
 
 func listHarnessRuns() error {
@@ -1070,6 +1092,16 @@ The normal Salad chat is a separate product path and is not used by this
 command. Network access is denied by default. To request it for this run:
 
   salad engineer --network allow
+
+Provider and runtime options:
+
+  --salad-provider <name>  Choose the Salad model provider for this run
+  --model <name>           Override the model sent to the provider
+  --network <mode>         deny (default), loopback, or allow
+
+If the server-selected provider is unavailable, retry with an explicitly
+configured provider or set SALAD_HARNESS_PROVIDER. Salad does not silently
+switch providers because that can change cost, privacy, and tool behavior.
 
 Use "salad engineer runs" to see saved local sessions for this workspace,
 then "salad engineer resume <run-id>" to continue one later. Resume only after
