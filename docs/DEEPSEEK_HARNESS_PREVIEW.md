@@ -94,25 +94,28 @@ Each ACP run receives a local run ID. Continue a previous run explicitly with:
 salad harness resume <run-id> "Now run the focused test and explain the result"
 ```
 
-DeepSeek ACP currently starts a fresh session for this command. Salad makes
-that limitation explicit and carries the previous request into the new local
-run record; it does not pretend to offer server-side session resume.
+Salad records the actual ACP session ID returned by the carrier. When a future
+carrier advertises ACP `session/load` or `session/resume`, Salad uses that
+capability to restore the saved session. The pinned DeepSeek preview carrier
+currently does not advertise either capability, so Salad prints that it is
+starting a fresh continuation and includes the previous request explicitly.
 
 When DSH asks to do something outside its allowed workspace, Salad shows a
 clear `Allow once? [y/N]` question. The safe default is rejection. Press
 Ctrl-C to cancel the local run.
 
-The ACP preview starts a fresh DSH session for each invocation. DeepSeek's ACP
-bridge does not yet expose resume/list/load, so ACP `salad harness resume` is a
-Salad continuation rather than a DSH session restore. The explicit JSON-RPC
-mode is wired to reuse DSH's persisted session and stores its session files in
-Salad's private config directory, not in the repository. That restore path has
-now been verified across two separate invocations with a packaged carrier
-built from the pinned DSH source. The carrier build applies a small,
-shape-checked Salad patch so the JSON-RPC server calls DSH's real resume API
-when the session already exists. The second process saw a marker written by
+The ACP adapter is capability-aware: it only calls `session/load` or
+`session/resume` when the carrier advertises support, following the current
+ACP protocol. With the pinned DSH preview, `salad harness resume` remains a
+transparent Salad continuation because that carrier does not expose restore.
+The explicit JSON-RPC mode is wired to reuse DSH's persisted session and stores
+its session files in Salad's private config directory, not in the repository.
+That restore path has now been verified across two separate invocations with a
+packaged carrier built from the pinned DSH source. The carrier build applies a
+small, shape-checked Salad patch so the JSON-RPC server calls DSH's real resume
+API when the session already exists. The second process saw a marker written by
 the first process. This is compatibility evidence, not a claim that the
-default ACP path restores sessions:
+pinned default ACP carrier restores sessions:
 
 ```text
 salad harness --protocol jsonrpc --command /path/to/dsh-jsonrpc-agent \
@@ -150,10 +153,12 @@ Salad Terminal
        └─ session cancellation, then bounded kill fallback
 ```
 
-The current ACP contract is intentionally limited: fresh sessions only, with
-no server-side resume/list/load. `salad harness resume` is transparent local
-continuation, not a claim that ACP restored DSH history. JSON-RPC can restore a
-persisted DSH session when a developer supplies a compatible carrier, but that
-mode is not the default interactive path. The integration remains opt-in:
+The current pinned ACP carrier contract is intentionally limited: it exposes
+fresh sessions only, with no server-side resume/list/load. `salad harness
+resume` is transparent local continuation for that carrier, not a claim that
+ACP restored DSH history. The adapter is ready to use stable ACP restore when
+the pinned runtime exposes it. JSON-RPC can restore a persisted DSH session
+when a developer supplies a compatible carrier, but that mode is not the
+default interactive path. The integration remains opt-in:
 normal Salad chat never launches this process and no DSH session becomes the
 Salad chat source of truth.

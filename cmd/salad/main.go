@@ -348,9 +348,10 @@ func runHarness(args []string) error {
 		if record.Config != "" {
 			args = append([]string{"--config", record.Config}, args...)
 		}
-		if record.Protocol == "jsonrpc" && record.SessionID != "" {
+		if record.SessionID != "" {
 			args = append([]string{"--session", record.SessionID}, args...)
-		} else {
+		}
+		if record.Protocol != "jsonrpc" {
 			args = append([]string{"Continue the previous Salad Harness run. Previous request: " + record.Prompt + ". New request:"}, args...)
 		}
 	}
@@ -408,9 +409,6 @@ func runHarness(args []string) error {
 	}
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("DSH_NETWORK_MODE")), "allow") && !networkExplicit {
 		return fmt.Errorf("network access is denied by default; pass `--network allow` to request it for this run")
-	}
-	if protocol == "acp" && sessionID != "" {
-		return fmt.Errorf("ACP starts a fresh session; use --protocol jsonrpc for a resumable SDK session")
 	}
 	if len(prompt) == 0 {
 		return fmt.Errorf("harness prompt cannot be empty")
@@ -488,7 +486,8 @@ func runHarness(args []string) error {
 	}
 	opts.SessionID = sessionID
 	fmt.Printf("[harness] run id: %s\n", runID)
-	if err := harness.SaveRun(harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: strings.Join(prompt, " "), StartedAt: time.Now().UTC(), ResumeOf: resumeOf}); err != nil {
+	runRecord := harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: strings.Join(prompt, " "), StartedAt: time.Now().UTC(), ResumeOf: resumeOf}
+	if err := harness.SaveRun(runRecord); err != nil {
 		return fmt.Errorf("save harness run record: %w", err)
 	}
 	if chatID == "" {
@@ -503,10 +502,17 @@ func runHarness(args []string) error {
 	postHarnessEventWithSequence(context.Background(), providerClient, chatID, runID, workspaceID, "running", "Harness is working in the trusted workspace", 2)
 	runContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	var result harness.Result
 	if protocol == "jsonrpc" {
-		_, err = harness.Run(runContext, opts, strings.Join(prompt, " "))
+		result, err = harness.Run(runContext, opts, strings.Join(prompt, " "))
 	} else {
-		_, err = harness.RunACP(runContext, opts, strings.Join(prompt, " "))
+		result, err = harness.RunACP(runContext, opts, strings.Join(prompt, " "))
+	}
+	if result.SessionID != "" && result.SessionID != runRecord.SessionID {
+		runRecord.SessionID = result.SessionID
+		if saveErr := harness.SaveRun(runRecord); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "[harness] could not save the actual session id: %v\n", saveErr)
+		}
 	}
 	status, summary := "completed", "Harness run completed"
 	if err != nil {

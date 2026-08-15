@@ -329,6 +329,10 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   session restore. ACP remains the verified interactive path; JSON-RPC remains
   a compatibility path because it has no per-prompt cancellation and is not a
   distributed default carrier.
+- [x] Make the ACP adapter capability-aware: persist the actual returned ACP
+  session ID, use `session/load` or `session/resume` when the carrier advertises
+  one, and keep an explicit fresh-continuation fallback for the pinned DSH
+  preview that advertises neither. Fake-runtime tests cover both branches.
 - [x] Make the Unix installer transactional across the Salad binary and the
   managed carrier: carrier download/extraction is preflighted before the
   binary swap, and a carrier-install failure restores the previous binary.

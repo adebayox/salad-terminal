@@ -94,7 +94,7 @@ The terminal reaches flow state only when the following are reliable:
 | Interactive processes and dev servers | Carrier cancellation now kills the full Unix process group; a complete start/view/restart UX is not proven | Start, view logs, stop, restart, and clean up |
 | Git branch/commit/PR workflow | Read-only inspection is present | Writes are explicit, reviewable, and recoverable |
 | Approval policy | Present in both paths, with different semantics | One policy model; low-risk auto-run, high-risk review |
-| Session resume | Terminal chat resumes Salad history; ACP starts fresh, while explicit JSON-RPC runs now reuse private persisted DSH sessions | The default interactive path must restore actual agent history, not only the prompt |
+| Session resume | Run records retain the actual ACP session ID; the adapter uses ACP load/resume when the carrier advertises it. The pinned DSH preview does not, so its fallback is an explicit fresh continuation. JSON-RPC runs reuse private persisted DSH sessions | The shipped carrier must advertise and pass a real ACP restore smoke before this gate closes |
 | Background work/subagents | DSH config contains plugins; terminal UX is not proven | List, inspect, interrupt, and receive completion reliably |
 | Reconnect and replay | Receipt events exist; local DSH run record is thin | No silent stall after disconnect; replay is deterministic |
 | Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; confined shell network is deny-by-default there | Prove the same boundary on Linux and Windows; add an explicit allowlisted network approval flow |

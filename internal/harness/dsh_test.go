@@ -31,7 +31,7 @@ func TestRunACPWithFakeRuntimeUsesNumericIDsAndRejectsApproval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	result, err := RunACP(ctx, Options{
-		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACP"}, Cwd: t.TempDir(),
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACP"}, Cwd: t.TempDir(), SessionID: "saved-session",
 		Env: []string{"SALAD_DSH_TEST_HELPER=acp"}, Input: strings.NewReader("n\n"), Output: &output,
 	}, "Make a safe change")
 	if err != nil {
@@ -40,8 +40,24 @@ func TestRunACPWithFakeRuntimeUsesNumericIDsAndRejectsApproval(t *testing.T) {
 	if result.SessionID != "fake-acp-session" {
 		t.Fatalf("RunACP() session = %q", result.SessionID)
 	}
-	if !strings.Contains(output.String(), "ACP fake response") || !strings.Contains(output.String(), "Allow once?") {
+	if !strings.Contains(output.String(), "ACP fake response") || !strings.Contains(output.String(), "Allow once?") || !strings.Contains(output.String(), "fresh continuation") {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestRunACPUsesAdvertisedSessionRestore(t *testing.T) {
+	var output strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := RunACP(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPResume"}, Cwd: t.TempDir(), SessionID: "saved-session",
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp-resume"}, Input: strings.NewReader(""), Output: &output,
+	}, "Continue the work")
+	if err != nil {
+		t.Fatalf("RunACP() error = %v", err)
+	}
+	if result.SessionID != "saved-session" || !strings.Contains(output.String(), "ACP resumed response") {
+		t.Fatalf("session = %q output = %q", result.SessionID, output.String())
 	}
 }
 
@@ -190,6 +206,38 @@ func TestHarnessFakeACP(t *testing.T) {
 					"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": "ACP fake response"},
 				}},
 			})
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "result": map[string]string{"stopReason": "end_turn"}})
+			return
+		}
+	}
+}
+
+func TestHarnessFakeACPResume(t *testing.T) {
+	if os.Getenv("SALAD_DSH_TEST_HELPER") != "acp-resume" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	for scanner.Scan() {
+		var frame map[string]any
+		if json.Unmarshal(scanner.Bytes(), &frame) != nil {
+			continue
+		}
+		method, _ := frame["method"].(string)
+		switch method {
+		case "initialize":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{
+				"protocolVersion":   1,
+				"agentCapabilities": map[string]any{"loadSession": true},
+			}})
+		case "session/load":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "result": map[string]any{}})
+		case "session/prompt":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+				"sessionId": "saved-session", "update": map[string]any{
+					"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": "ACP resumed response"},
+				},
+			}})
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "result": map[string]string{"stopReason": "end_turn"}})
 			return
 		}

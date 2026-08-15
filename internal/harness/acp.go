@@ -40,6 +40,15 @@ type acpPromptResult struct {
 	StopReason string `json:"stopReason"`
 }
 
+type acpInitializeResult struct {
+	AgentCapabilities struct {
+		LoadSession         bool `json:"loadSession"`
+		SessionCapabilities struct {
+			Resume json.RawMessage `json:"resume"`
+		} `json:"sessionCapabilities"`
+	} `json:"agentCapabilities"`
+}
+
 // RunACP starts one local ACP child, drives one prompt, handles the child's
 // permission requests, and cancels the addressed session if ctx is cancelled.
 func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
@@ -203,30 +212,56 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 		}
 	}
 
-	if _, err := request("1", "initialize", map[string]any{
+	initializeResult, err := request("1", "initialize", map[string]any{
 		"protocolVersion":    1,
 		"clientCapabilities": map[string]any{},
-	}); err != nil {
-		return Result{}, err
-	}
-	newSessionParams, err := request("2", "session/new", map[string]any{
-		"cwd": opts.Cwd, "mcpServers": []any{},
 	})
 	if err != nil {
 		return Result{}, err
 	}
-	var session struct {
-		SessionID string `json:"sessionId"`
+	var initialized acpInitializeResult
+	if err := json.Unmarshal(initializeResult, &initialized); err != nil {
+		return Result{}, fmt.Errorf("decode ACP initialize response: %w", err)
 	}
-	if err := json.Unmarshal(newSessionParams, &session); err != nil || session.SessionID == "" {
-		return Result{}, errors.New("ACP session/new returned no session id")
+
+	sessionID := ""
+	canResume := len(initialized.AgentCapabilities.SessionCapabilities.Resume) > 0 && string(initialized.AgentCapabilities.SessionCapabilities.Resume) != "null"
+	if opts.SessionID != "" && (initialized.AgentCapabilities.LoadSession || canResume) {
+		setSession(opts.SessionID)
+		method := "session/resume"
+		if initialized.AgentCapabilities.LoadSession {
+			method = "session/load"
+		}
+		if _, err := request("2", method, map[string]any{
+			"sessionId": opts.SessionID, "cwd": opts.Cwd, "mcpServers": []any{},
+		}); err != nil {
+			return Result{}, err
+		}
+		sessionID = opts.SessionID
+	} else {
+		if opts.SessionID != "" {
+			fmt.Fprintln(opts.Output, "[harness] carrier does not advertise session restore; starting a fresh continuation")
+		}
+		newSessionParams, err := request("2", "session/new", map[string]any{
+			"cwd": opts.Cwd, "mcpServers": []any{},
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		var session struct {
+			SessionID string `json:"sessionId"`
+		}
+		if err := json.Unmarshal(newSessionParams, &session); err != nil || session.SessionID == "" {
+			return Result{}, errors.New("ACP session/new returned no session id")
+		}
+		sessionID = session.SessionID
 	}
-	setSession(session.SessionID)
+	setSession(sessionID)
 
 	if err := writeFrame(map[string]any{
 		"jsonrpc": "2.0", "id": "3", "method": "session/prompt",
 		"params": map[string]any{
-			"sessionId": session.SessionID,
+			"sessionId": sessionID,
 			"prompt":    []map[string]string{{"type": "text", "text": prompt}},
 		},
 	}); err != nil {
@@ -238,7 +273,7 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 			return Result{}, err
 		}
 		if frame.Method != "" {
-			if err := handleACPFrame(opts, inputReader, writeResponse, frame, session.SessionID); err != nil {
+			if err := handleACPFrame(opts, inputReader, writeResponse, frame, sessionID); err != nil {
 				return Result{}, err
 			}
 			continue
@@ -256,7 +291,7 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 		if result.StopReason != "" {
 			fmt.Fprintf(opts.Output, "[harness] %s\n", result.StopReason)
 		}
-		return Result{SessionID: session.SessionID}, nil
+		return Result{SessionID: sessionID}, nil
 	}
 }
 
