@@ -31,10 +31,12 @@ chat, TUI, or SaladBE files were changed in this audit.
   8767, an external `curl` received HTTP 200, job control stopped it, and an
   external check confirmed the port was closed.
 - The default network-deny policy refused the first socket attempt. The
-  corrected candidate now uses explicit `--network loopback` approval for a
-  local server: localhost HTTP passed while an external HTTPS probe failed
-  under the Seatbelt profile. The authenticated provider bridge also completed
-  a real model turn through the candidate carrier.
+  corrected macOS candidate now uses explicit `--network loopback` approval
+  for a local server: localhost HTTP passed while an external HTTPS probe
+  failed under the Seatbelt profile. Native Linux bubblewrap does not currently
+  provide a usable loopback interface, so Linux rejects that mode instead of
+  silently running a broken local-server flow. The authenticated provider
+  bridge also completed a real model turn through the candidate carrier.
 - `salad engineer resume <run-id>` restored the same ACP conversation in a
   second process. The terminal conversation resumed, but the old OS process
   did not: closing the carrier correctly cleans up child processes. This is a

@@ -324,6 +324,16 @@ func runEngineer(args []string) error {
 	return runHarnessMode(args, true)
 }
 
+func validateEngineerNetworkMode(networkMode, platform string) error {
+	if networkMode != "deny" && networkMode != "loopback" && networkMode != "allow" {
+		return fmt.Errorf("unsupported harness network mode %q; choose deny, loopback, or allow", networkMode)
+	}
+	if platform == "linux" && networkMode == "loopback" {
+		return errors.New("Linux does not support --network loopback yet: bubblewrap cannot create a usable loopback interface without elevated network privileges; use --network allow only when internet access is acceptable")
+	}
+	return nil
+}
+
 func runHarnessMode(args []string, interactive bool) error {
 	surface := "salad harness"
 	if interactive {
@@ -439,8 +449,8 @@ func runHarnessMode(args []string, interactive bool) error {
 	if interactive && protocol != "acp" {
 		return errors.New("salad engineer uses the ACP session runtime; jsonrpc is available only through `salad harness`")
 	}
-	if networkMode != "deny" && networkMode != "loopback" && networkMode != "allow" {
-		return fmt.Errorf("unsupported harness network mode %q; choose deny, loopback, or allow", networkMode)
+	if err := validateEngineerNetworkMode(networkMode, runtime.GOOS); err != nil {
+		return err
 	}
 	parentNetworkMode := strings.ToLower(strings.TrimSpace(os.Getenv("DSH_NETWORK_MODE")))
 	if (parentNetworkMode == "allow" || parentNetworkMode == "loopback") && !networkExplicit {

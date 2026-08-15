@@ -511,10 +511,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Reproduced the real v0.2.15 developer flow from the exact installed
   release. Collaboration, edit/test/build, persistent PTY, and cleanup work;
   default-deny networking incorrectly blocked even a localhost dev server.
-- [x] Added explicit `--network loopback` mode. It prompts visibly, allows
-  model-controlled processes to bind/connect to localhost, and keeps external
-  network access denied. `--network allow` remains the broader, separately
-  approved mode.
+- [x] Added explicit `--network loopback` mode for macOS. It prompts visibly,
+  allows model-controlled processes to bind/connect to localhost, and keeps
+  external network access denied. Linux now rejects that mode explicitly after
+  native bubblewrap proved it cannot create a usable loopback interface;
+  `--network allow` remains the broader, separately approved mode.
 - [x] Rebuilt the pinned macOS carrier from the audited DeepSeek source and
   verified the candidate against the real Node project: localhost HTTP passed,
   an external HTTPS probe failed under the candidate Seatbelt policy, and
@@ -541,6 +542,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   while an external HTTPS probe was denied. Explicit resume with a concrete
   new request restored the prior ACP conversation and returned the stored
   marker.
+- [x] Native Linux x64/ARM64 release smoke proved external network denial and
+  also proved the current unprivileged bubblewrap namespace cannot support
+  localhost (`Failed RTM_NEWADDR: Operation not permitted`). The CLI now
+  rejects Linux `--network loopback` rather than promising a broken dev-server
+  flow.
 - [x] Removed the empty synthetic prompt from no-argument interactive resume;
   a local build now restores directly to `[salad engineer] >`, and an explicit
   follow-up returned `RESUME_NO_EMPTY`.
