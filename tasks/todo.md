@@ -482,7 +482,45 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   can make two carriers write one session log and corrupt it. Resume now
   refuses `starting`/`running` records and documents that live PTYs/dev servers
   belong to the current carrier process.
-- [ ] Publish v0.2.15 with the resume guard, then rerun the exact-release
-  resume/cancellation matrix from a clean workspace. Native Linux/Windows
-  runtime proof, network allowlisting, reconnect/replay, and browser receipt
-  verification remain open; normal Salad Chat remains untouched.
+- [x] Published v0.2.15 with the resume guard and reran the exact-release
+  resume/cancellation matrix from a clean workspace. The exact release passed
+  safe resume after process exit and refused active-run resume. Native
+  Linux/Windows runtime proof, domain-level network allowlisting,
+  reconnect/replay, and browser receipt verification remain open; normal Salad
+  Chat remains untouched.
+
+### Post-release challenge adjudication (2026-08-15)
+
+- [x] Ran independent read-only security/package and engineer-flow reviews
+  after the DeepSeek reviewer bridge timed out. The reviews confirmed that
+  v0.2.15 is a usable macOS-focused preview, not a generally shippable
+  cross-platform engineer product.
+- [x] Converted the review findings into durable work items for native
+  Linux/Windows sandbox proof, domain-level network allowlisting, package
+  provenance and Windows rollback, and release-level collaboration/
+  cancellation/replay evidence.
+- [x] Added staged atomic replacement and previous-binary preservation to the
+  Windows installer. This is source-complete but not released or native-tested
+  yet.
+- [ ] Do not call the engineer terminal production-ready until the four
+  durable work items above have evidence. Normal Salad Chat remains outside
+  the harness path and has no changed files.
+
+### Loopback developer-flow correction (2026-08-15)
+
+- [x] Reproduced the real v0.2.15 developer flow from the exact installed
+  release. Collaboration, edit/test/build, persistent PTY, and cleanup work;
+  default-deny networking incorrectly blocked even a localhost dev server.
+- [x] Added explicit `--network loopback` mode. It prompts visibly, allows
+  model-controlled processes to bind/connect to localhost, and keeps external
+  network access denied. `--network allow` remains the broader, separately
+  approved mode.
+- [x] Rebuilt the pinned macOS carrier from the audited DeepSeek source and
+  verified the candidate against the real Node project: localhost HTTP passed,
+  an external HTTPS probe failed under the candidate Seatbelt policy, and
+  closing the PTY closed the port. Restored the exact v0.2.15 managed carrier
+  after the test.
+- [ ] Publish the loopback correction only after release CI and a clean exact
+  release install reproduce this matrix; native Linux loopback, Windows
+  runtime, domain allowlisting, package provenance, reconnect/replay, and
+  browser receipt work remain open.

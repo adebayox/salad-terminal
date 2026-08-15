@@ -153,6 +153,10 @@ func TestScrubbedEnvironmentDoesNotInheritNetworkAllow(t *testing.T) {
 	if !containsEnvironment(env, "DSH_NETWORK_MODE=allow") || containsEnvironment(env, "DSH_NETWORK_MODE=deny") {
 		t.Fatalf("explicit network capability was not preserved: %v", env)
 	}
+	env = scrubbedEnvironment(withHarnessSafetyDefaults([]string{"DSH_NETWORK_MODE=loopback"}, "/tmp/workspace"))
+	if !containsEnvironment(env, "DSH_NETWORK_MODE=loopback") || containsEnvironment(env, "DSH_NETWORK_MODE=allow") {
+		t.Fatalf("explicit loopback capability was not preserved safely: %v", env)
+	}
 }
 
 func TestHarnessSafetyDefaultsDenyNetworkUnlessExplicitlyOverridden(t *testing.T) {
@@ -163,6 +167,10 @@ func TestHarnessSafetyDefaultsDenyNetworkUnlessExplicitlyOverridden(t *testing.T
 	overridden := withHarnessSafetyDefaults([]string{"DSH_NETWORK_MODE=allow"}, "/tmp/workspace")
 	if !containsEnvironment(overridden, "DSH_NETWORK_MODE=allow") || containsEnvironment(overridden, "DSH_NETWORK_MODE=deny") {
 		t.Fatalf("override = %v", overridden)
+	}
+	loopback := withHarnessSafetyDefaults([]string{"DSH_NETWORK_MODE=loopback"}, "/tmp/workspace")
+	if !containsEnvironment(loopback, "DSH_NETWORK_MODE=loopback") || containsEnvironment(loopback, "DSH_NETWORK_MODE=deny") {
+		t.Fatalf("loopback override = %v", loopback)
 	}
 }
 

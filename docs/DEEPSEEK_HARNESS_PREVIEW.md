@@ -66,17 +66,28 @@ hatch `DEEPSEEK_API_KEY=...`; Salad never stores or forwards that key.
 
 The managed carrier protects common credential-shaped files from the model,
 including `.env*`, `.ssh`, `.aws`, private keys, and package credential files.
-Confined shell commands start with network disabled. For a trusted operation
-that genuinely needs network access, request it per run:
+Confined shell commands start with network disabled. For a local dev server or
+another operation that only needs localhost, request the narrower loopback
+capability per run:
+
+```bash
+salad engineer --network loopback
+```
+
+Loopback mode allows model-controlled commands to bind and connect to
+`localhost`/`127.0.0.1`, but does not grant internet access. For a trusted
+operation that genuinely needs external network access, request the broader
+capability per run:
 
 ```text
 salad engineer --network allow "Install the dependencies and run the test suite"
 ```
 
 Salad prints a warning and asks for confirmation before starting that run.
-Setting `DSH_NETWORK_MODE=allow` in the parent shell is rejected; network is
-not an invisible environment switch. This is a visible per-run approval, not
-yet a domain allowlist, so network-dependent work remains a preview feature.
+Setting `DSH_NETWORK_MODE=allow` or `loopback` in the parent shell is rejected;
+network is not an invisible environment switch. External access is a visible
+per-run approval, not yet a domain allowlist, so network-dependent work
+remains a preview feature.
 
 Before starting, check the local setup without touching the project:
 
