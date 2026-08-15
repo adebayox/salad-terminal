@@ -116,10 +116,18 @@ if [[ "$release_arch" == "x64" ]]; then
   release_arch="amd64"
 fi
 install -m 700 "$carrier" "$output_dir/dsh-acp-agent-$release_platform-$release_arch"
+if [[ "$target_platform" == "macos" ]]; then
+  spawn_helper="$(find dist-exe -maxdepth 1 -type f -name "dsh-acp-agent-pkg-${platform}-spawn-helper" -print -quit)"
+  if [[ -z "$spawn_helper" ]]; then
+    echo "DeepSeek macOS carrier is missing its node-pty spawn helper for $target" >&2
+    exit 1
+  fi
+  install -m 700 "$spawn_helper" "$output_dir/dsh-acp-agent-$release_platform-$release_arch-spawn-helper"
+fi
 install -m 600 examples/acp-agent/cordis.yml "$output_dir/cordis.yml"
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$output_dir" && sha256sum "dsh-acp-agent-$release_platform-$release_arch" > SHA256SUMS)
+  (cd "$output_dir" && sha256sum dsh-acp-agent-* cordis.yml > SHA256SUMS)
 else
-  (cd "$output_dir" && shasum -a 256 "dsh-acp-agent-$release_platform-$release_arch" > SHA256SUMS)
+  (cd "$output_dir" && shasum -a 256 dsh-acp-agent-* cordis.yml > SHA256SUMS)
 fi
 echo "Built $output_dir/dsh-acp-agent-$release_platform-$release_arch"

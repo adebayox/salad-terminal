@@ -163,8 +163,13 @@ jobs:
             "${{ matrix.dsh_target }}" \
             "$RUNNER_TEMP/dsh-dist"
           archive="salad-harness-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
-          tar -C "$RUNNER_TEMP/dsh-dist" -czf "dist/$archive" \
-            "dsh-acp-agent-${{ matrix.platform }}-${{ matrix.arch }}" cordis.yml
+          files=("dsh-acp-agent-${{ matrix.platform }}-${{ matrix.arch }}" cordis.yml)
+          if [[ "${{ matrix.platform }}" == "darwin" ]]; then
+            helper="dsh-acp-agent-${{ matrix.platform }}-${{ matrix.arch }}-spawn-helper"
+            test -x "$RUNNER_TEMP/dsh-dist/$helper"
+            files+=("$helper")
+          fi
+          tar -C "$RUNNER_TEMP/dsh-dist" -czf "dist/$archive" "${files[@]}"
           ls -lh "dist/$archive"
 
       - name: Upload harness archive
