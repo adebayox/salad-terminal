@@ -98,11 +98,11 @@ The terminal reaches flow state only when the following are reliable:
 | Read/search/project instructions | Present in the existing path; DSH has workspace context | Same rules are visible to whichever runtime runs |
 | File edits and reviewable diffs | Present in the existing path; DSH has native file tools | One diff/approval experience, including reject and retry |
 | Build, test, lint, and git inspection | Present but command path is bounded and 60 seconds | Long commands, output limits, cancellation, and clear evidence |
-| Interactive processes and dev servers | v0.2.12 proved process-group cleanup, but its config exposed only one-shot bash | The next carrier now mounts DSH's official persistent PTY and job plugins; packaged start/read/stop/restart smoke is still required |
+| Interactive processes and dev servers | Corrected macOS candidate now uses DSH's official persistent PTY and job plugins; external HTTP and stop checks passed | Publish after PR #10; native Linux/Windows proof remains open. A process is live only while its carrier session is alive |
 | Git branch/commit/PR workflow | Read-only inspection is present | Writes are explicit, reviewable, and recoverable |
 | Approval policy | Present in both paths, with different semantics | One policy model; low-risk auto-run, high-risk review |
 | Session resume | One `salad engineer` session accepts multiple prompts in one ACP process. The rebuilt macOS carrier advertises ACP resume/close, restores across two processes, and rejects a mismatched workspace. Older carriers use the explicit fresh-continuation fallback | Linux/Windows native proof and reconnect/replay remain open |
-| Background work/subagents | Subagents are configured; persistent job controls were not mounted in v0.2.12 | The next carrier mounts DSH's `jobs` registry and `job_list`/`job_output`/`job_kill`; packaged completion and cancellation smoke is still required |
+| Background work/subagents | Corrected macOS candidate exposes DSH's `jobs` registry and `job_list`/`job_output`/`job_kill`; a real server was stopped through job control | Publish after PR #10; native cross-platform and broader cancellation matrix remain open |
 | Reconnect and replay | DSH persists an append-only session log and the CLI now persists run status/session ID; terminal output is not replayed by Salad itself | Resume must restore the model session, show the saved run state, and document that live output is re-rendered rather than replayed |
 | Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; confined shell network is deny-by-default there | Prove the same boundary on Linux and Windows; add an explicit allowlisted network approval flow |
 | Installation and update | Checksums, rollback, and managed carrier exist | Size is disclosed; update is atomic and rollback-tested |
@@ -128,9 +128,9 @@ installed: the normal terminal binary is about 15 MB uncompressed, while the
 macOS arm64 DSH carrier is about 198 MB uncompressed and 53.8 MB compressed.
 That is acceptable for a preview only if the installer says so and offers a
 clear way to install the lightweight terminal without the carrier.
-v0.2.12 remains the previously published preview; the source build now adds
-DSH's official persistent PTY and background-job plugins, which must be rebuilt
-and published before those controls can be promised to users.
+v0.2.12 remains the previously published preview; the corrected source build
+adds DSH's official persistent PTY and background-job plugins, but must still
+be merged and published before those controls can be promised to users.
 
 ## Non-negotiable safety boundary
 

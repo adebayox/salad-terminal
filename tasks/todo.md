@@ -442,19 +442,22 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Make `salad engineer resume <run-id>` and saved-run inspection visible in
   help and the normal engineer workflow.
 - [x] Integrate DeepSeek's official persistent PTY and background-job plugins
-  into the pinned carrier build. The v0.2.12 carrier predates this source
-  change; a new packaged carrier still needs to be built and exercised. The
-  shape-checked patch was run against a fixture containing every pinned source
-  seam and produced the expected `terminal_*`/`job_*` config entries.
+  into the pinned carrier build. The first rebuilt carrier exposed an
+  abstract-job-registry composition error; commit `a09460b` now loads the
+  concrete `@deepseek-ai/dsh-jobs-local` implementation. CI run `31890011530`
+  rebuilt all four carrier targets, and a corrected macOS candidate booted and
+  passed a live Salad-backed PTY/job smoke.
 - [x] Ran a real collaboration prompt against the public carrier. The model
   could delegate a subagent, but the v0.2.12 config gave the engineer no
   observable job-list/output/kill control; the follow-up could not collect the
   child result before cancellation. This is evidence for the PTY/job carrier
   change, not a pass for the old package.
-- [ ] Decide and document the remaining process-control and replay boundary;
-  do not call a same-process child cleanup test a complete dev-server UX. The
-  source now has DSH's `terminal_*` and `job_*` controls; packaged proof is
-  still open.
-- [ ] Re-run the full requirement matrix after these changes, including
-  background work, cancellation, reconnect/resume, package install, security,
-  and normal-chat non-regression evidence.
+- [x] Decide and document the process-control and replay boundary: model
+  session history resumes, while live OS processes and terminal output do not
+  survive carrier shutdown; child process groups are cleaned up.
+- [ ] Merge PR #10 and publish a new carrier release. The public `v0.2.12`
+  package remains the older one-shot carrier.
+- [ ] Re-run the remaining release matrix on native Linux/Windows, including
+  sandbox enforcement, reconnect/replay, cancellation, and package install.
+  Normal Salad Chat remains outside this work and must stay a no-change
+  regression check.

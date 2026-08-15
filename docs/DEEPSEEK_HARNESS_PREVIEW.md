@@ -157,12 +157,18 @@ default interactive approval path. The disposable smoke used the upstream
 JSON-RPC example composition; that composition is not itself the release
 security profile.
 
-The next carrier build also mounts DeepSeek's official persistent PTY and
+The corrected carrier mounts DeepSeek's official persistent PTY and
 background-job plugins. That gives the model `terminal_open`, `terminal_read`,
 `terminal_signal`, `terminal_close`, plus `job_list`, `job_output`, and
-`job_kill` for dev servers and long-running tests. The published v0.2.12
-carrier predates that addition; it must be rebuilt and smoke-tested before
-these controls are advertised as available.
+`job_kill` for dev servers and long-running tests. A corrected macOS candidate
+was rebuilt from the pinned source, ran through the live Salad provider, and
+started/stopped a Python server with an external HTTP check. The published
+v0.2.12 carrier predates that addition; PR #10 must be merged and released
+before users receive these controls.
+
+The boundary is deliberate: ACP conversation state can resume in a second
+process, but an OS process owned by the old carrier cannot survive carrier
+shutdown. Closing the engineer session cleans up its child process group.
 
 ## Runtime packaging
 
@@ -189,12 +195,12 @@ Salad Terminal
 ```
 
 The previously published pinned ACP carrier exposed fresh sessions only, with
-no server-side resume/list/load. The current build contains a shape-checked
-source patch that exposes DSH's existing durable `ctx.agents.resume()` and
-session-close capabilities through ACP. A locally packaged macOS candidate
-passed a two-process restore smoke and a mismatched-workspace negative test,
-and the patched carrier is now published in Salad Terminal `v0.2.12`. JSON-RPC
-can restore a
+no server-side resume/list/load. The current source build contains a
+shape-checked patch that exposes DSH's existing durable `ctx.agents.resume()`
+and session-close capabilities through ACP. A locally packaged macOS candidate
+passed a two-process restore smoke, a mismatched-workspace negative test, and
+the live PTY/job smoke described above. It is in PR #10 and is not yet the
+public release. JSON-RPC can restore a
 persisted DSH session when a developer supplies a compatible carrier, but that
 mode is not the default interactive path. The integration remains opt-in:
 normal Salad chat never launches this process and no DSH session becomes the
