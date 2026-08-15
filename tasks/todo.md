@@ -668,3 +668,20 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   the model previously claimed reviewer approval without a returned finding.
   Re-test the bounded reviewer lane when the provider route is healthy, then
   publish the fix only after an actual returned read-only review is observed.
+
+### v0.2.19 exact-release continuation (2026-08-15)
+
+- [x] Published v0.2.19 after the release matrix passed Go test/vet, all six
+  terminal archives, all four macOS/Linux carrier builds, native Linux x64/
+  ARM64 sandbox smoke, Windows terminal-boundary smoke, and immutable release
+  publication. The exact public installer installed v0.2.19 and `harness
+  doctor` reported the managed carrier hash.
+- [x] Re-ran the plain provider health turn from a trusted Git workspace with
+  the exact public v0.2.19 CLI. It still returned provider HTTP 502 after the
+  terminal's one bounded transient retry, so a real collaboration turn is not
+  signed off; this is currently a Salad provider-route blocker, not a normal
+  Salad Chat path failure.
+- [x] Removed the implicit active-chat lifecycle-receipt fallback. Engineer
+  receipts must be explicit opt-in so starting a local agent can never mutate
+  the user's normal active chat by accident; added a unit test for the
+  explicit `--chat`/`SALAD_HARNESS_CHAT_ID` selection rule.

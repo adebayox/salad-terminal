@@ -590,14 +590,7 @@ func runHarnessMode(args []string, interactive bool) error {
 			fmt.Fprintf(os.Stderr, "[harness] could not save the active session id: %v\n", saveErr)
 		}
 	}
-	if chatID == "" {
-		chatID = strings.TrimSpace(os.Getenv("SALAD_HARNESS_CHAT_ID"))
-	}
-	if chatID == "" {
-		if active, activeErr := config.LoadActiveChat(); activeErr == nil {
-			chatID = active.ChatID
-		}
-	}
+	chatID = harnessReceiptChatID(chatID, os.Getenv("SALAD_HARNESS_CHAT_ID"))
 	postHarnessEvent(context.Background(), providerClient, chatID, runID, workspaceID, "started", "Harness run started")
 	postHarnessEventWithSequence(context.Background(), providerClient, chatID, runID, workspaceID, "running", "Harness is working in the trusted workspace", 2)
 	runContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -681,6 +674,13 @@ func environmentValue(values []string, name string) bool {
 		}
 	}
 	return false
+}
+
+func harnessReceiptChatID(explicit, environment string) string {
+	if value := strings.TrimSpace(explicit); value != "" {
+		return value
+	}
+	return strings.TrimSpace(environment)
 }
 
 func postHarnessEvent(ctx context.Context, client *api.Client, chatID, runID, workspaceID, status, summary string) {
@@ -1054,7 +1054,7 @@ or change your normal Salad chat. "salad harness doctor" checks the setup.
   --network <mode>        deny (default), loopback, or allow; prompts for access
   --salad-provider <name> Salad provider for the authenticated local bridge
   --session <id>          Reuse a JSON-RPC session across runs
-  --chat <id>             Share run start/finish with this Salad chat
+  --chat <id>             Opt in to lifecycle receipts for this chat
 `)
 	case "engineer":
 		fmt.Print(`Usage: salad engineer [prompt]

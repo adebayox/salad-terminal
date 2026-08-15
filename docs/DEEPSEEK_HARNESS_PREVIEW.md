@@ -19,12 +19,13 @@ salad say "..."
 ```
 
 The engineer session does not create messages or enter Salad's normal AI
-router. If a
-chat is active, it may publish a small lifecycle receipt through
-the authenticated `/api/harness/events` endpoint. That receipt contains a
-run ID, opaque workspace ID, status, and short summary; it does not contain
-prompts, file contents, tool arguments, or secrets. Normal chat messages,
-routing, billing, quota, and message storage are unchanged.
+router. Lifecycle receipts are disabled by default. They are sent only when
+the developer explicitly supplies `--chat <chat-id>` or
+`SALAD_HARNESS_CHAT_ID` and then use the authenticated `/api/harness/events`
+endpoint. The receipt contains a run ID, opaque workspace ID, status, and
+short summary; it does not contain prompts, file contents, tool arguments, or
+secrets. Normal chat messages, routing, billing, quota, and message storage
+are unchanged.
 
 ## Run it
 
@@ -108,11 +109,11 @@ salad engineer "read the project instructions, inspect the tests, and make a pla
 salad harness rollback
 ```
 
-If a Salad chat is active, the harness shares only lifecycle receipts with
-that chat. Use `--chat <chat-id>` to choose another chat. These are durable
-realtime events, not messages, so they do not trigger normal Salad AI
-routing. A signed-out account can still use the direct-key escape hatch;
-otherwise the authenticated Salad provider bridge is required.
+Lifecycle receipts are opt-in. Use `--chat <chat-id>` (or
+`SALAD_HARNESS_CHAT_ID`) to choose a dedicated receipt chat. These are durable
+realtime events, not messages, so they do not trigger normal Salad AI routing.
+A signed-out account can still use the direct-key escape hatch; otherwise the
+authenticated Salad provider bridge is required.
 
 Receipts are optional. If the server has the provider bridge but not the
 separate receipt endpoint, the engineer run continues normally and the CLI
