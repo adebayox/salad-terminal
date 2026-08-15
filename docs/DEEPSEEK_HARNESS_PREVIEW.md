@@ -115,6 +115,12 @@ salad engineer runs
 salad engineer resume <run-id> "Now run the focused test and explain the result"
 ```
 
+Resume only after the earlier engineer process has ended. Salad refuses to
+resume a run still marked active, because two carriers writing one saved
+session at the same time can corrupt its history. A persistent terminal or dev
+server belongs to the live carrier process; resume restores the conversation,
+not that live OS process.
+
 The run list shows the saved workspace, status, timestamp, and ACP session ID.
 Salad records the actual ACP session ID returned by the carrier immediately,
 before the long model turn starts, so a crash does not erase the resume handle.
@@ -123,8 +129,8 @@ carrier advertises ACP `session/load` or `session/resume`, Salad uses that
 capability to restore the saved session. Older public preview carriers do not
 advertise either capability, so Salad prints that it is starting a fresh
 continuation with those carriers. The rebuilt candidate in this repository
-does advertise `session/resume` and restores the same workspace session across
-two processes.
+does advertise `session/resume` and restores the same workspace conversation
+across two processes; it does not restore live operating-system processes.
 
 When DSH asks to do something outside its allowed workspace, Salad shows a
 clear `Allow once? [y/N]` question. The safe default is rejection. Press
