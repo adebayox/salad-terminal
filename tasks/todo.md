@@ -685,3 +685,64 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   receipts must be explicit opt-in so starting a local agent can never mutate
   the user's normal active chat by accident; added a unit test for the
   explicit `--chat`/`SALAD_HARNESS_CHAT_ID` selection rule.
+
+### v0.2.20 public engineer reality check (2026-08-15)
+
+- [x] Exercised the exact installed public `v0.2.20` CLI in a fresh trusted
+  workspace through a local provider fixture: it created files, ran `npm test`,
+  ran the build, opened a persistent terminal, started a real Node server,
+  verified `/health` with an independent curl, and closed the terminal with no
+  listener left behind. Interactive mode then exited cleanly with Ctrl-D.
+- [x] Exercised the collaborator protocol through the exact public CLI: the
+  parent requested `subagent_fork`, received the child result, and returned it
+  to the developer. This is protocol evidence only; it is not a production
+  provider signoff while Salad's provider route is unhealthy.
+- [x] Confirmed the public install boundary: `salad 0.2.20`, managed carrier
+  hash `925f20a9461be01fcd9ef5d259e79caa912c05703a5a3e22a9ed785ac9fb3971`,
+  active carrier about 198 MB, compressed release about 51 MB, and about 399 MB
+  on disk when one rollback carrier is retained.
+- [x] Re-ran a real authenticated `salad engineer` provider probe. The
+  dedicated route still returns `HTTP 502` after the terminal's bounded retry;
+  this is a Salad provider/origin incident, not a harness-install or normal
+  Salad Chat failure.
+- [x] Confirmed the default OpenAI provider failure is provider-specific, not
+  a missing harness installation or a route-wide failure: explicit xAI returns
+  real model responses through the same authenticated dedicated route.
+
+### Real Salad-backed engineer workflow (2026-08-15 continuation)
+
+- [x] Tested the dedicated provider choice instead of treating the default
+  OpenAI 502 as a route-wide blocker. `--salad-provider xai` returned a real
+  model response through the public `v0.2.20` CLI; OpenAI still returned 502
+  and Anthropic closed the carrier.
+- [x] Ran a real xAI-backed engineer session in a brand-new workspace. The
+  model created a Node project, started a persistent server on port 4327,
+  verified `/health` externally, and returned a concrete read-only collaborator
+  review.
+- [x] Independent verification caught that the model had ignored the requested
+  build step. `salad engineer resume` added `npm run build`; independent
+  `npm run build` produced `dist/server.js` and `dist/build.json`, and a fresh
+  independent `npm test` passed.
+- [x] Ran current public-release cancellation with the real xAI provider. A
+  server on port 4330 was externally reachable, Ctrl-C changed the saved run to
+  `cancelled`, and the port closed without manual process cleanup.
+- [x] Made provider recovery explicit in `salad engineer` help and failure
+  output, including `--salad-provider` and `SALAD_HARNESS_PROVIDER`, without
+  silent cross-provider fallback.
+- [ ] Post-release follow-up: add a read-only provider-health check so ordinary
+  users can see which Salad provider is available before starting a long run.
+
+### Shipping decision (2026-08-15)
+
+- [x] Ship `v0.2.20` as the Salad Terminal engineer preview for macOS and
+  Linux. The exact public release is installed, the real xAI-backed workflow
+  has been independently verified, and normal Salad Chat remains a separate,
+  untouched path.
+- [x] Ship with explicit boundaries: Windows has terminal-only support until a
+  native DSH carrier exists; Linux loopback mode is rejected; external network
+  access requires an explicit per-run choice; lifecycle receipts remain
+  opt-in; closing the carrier does not preserve live OS processes.
+- [ ] Post-release follow-up: make the default provider's health and recovery
+  path clearer. OpenAI's current default route returned 502 in this audit,
+  while explicit xAI succeeded. Do not silently fail over between providers or
+  route engineer work through normal Salad Chat.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -43,5 +44,35 @@ func TestHarnessReceiptChatIDIsExplicitOptIn(t *testing.T) {
 	}
 	if got := harnessReceiptChatID("flag-chat", "env-chat"); got != "flag-chat" {
 		t.Fatalf("explicit receipt chat = %q, want flag-chat", got)
+	}
+}
+
+func TestHarnessProviderRecoveryMessageOnlyForProviderFailures(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      string
+		provider string
+		want     string
+	}{
+		{name: "default provider", err: "ACP turn failed: DeepSeek API error (HTTP 502)", want: "default model provider failed"},
+		{name: "selected provider", err: "provider request failed", provider: "xai", want: `provider "xai" failed`},
+		{name: "unrelated error", err: "workspace not trusted", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The helper writes to stderr; the assertion is covered by the
+			// branch-specific message construction below without changing the
+			// user's terminal output stream in this unit test.
+			message := harnessProviderRecoveryMessage("salad engineer", tc.provider, errors.New(tc.err))
+			if tc.want == "" {
+				if message != "" {
+					t.Fatalf("message = %q, want empty", message)
+				}
+				return
+			}
+			if !strings.Contains(message, tc.want) {
+				t.Fatalf("message = %q, want substring %q", message, tc.want)
+			}
+		})
 	}
 }
