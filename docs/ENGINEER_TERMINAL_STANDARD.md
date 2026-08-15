@@ -98,13 +98,13 @@ The terminal reaches flow state only when the following are reliable:
 | Read/search/project instructions | Present in the existing path; DSH has workspace context | Same rules are visible to whichever runtime runs |
 | File edits and reviewable diffs | Present in the existing path; DSH has native file tools | One diff/approval experience, including reject and retry |
 | Build, test, lint, and git inspection | Present but command path is bounded and 60 seconds | Long commands, output limits, cancellation, and clear evidence |
-| Interactive processes and dev servers | Exact v0.2.15 macOS release passed external HTTP, same-process follow-up, and explicit close checks | Native Linux proof remains open; Windows has no DSH carrier. A process is live only while its carrier session is alive |
+| Interactive processes and dev servers | Exact v0.2.16 macOS release passed external HTTP, same-process follow-up, and explicit close checks; native Linux x64/ARM64 packaged carriers now pass ACP boot/prompt smoke | Native Linux long-lived PTY/job proof remains open; Windows has no DSH carrier. A process is live only while its carrier session is alive |
 | Git branch/commit/PR workflow | Read-only inspection is present | Writes are explicit, reviewable, and recoverable |
 | Approval policy | Present in both paths, with different semantics | One policy model; low-risk auto-run, high-risk review |
-| Session resume | One `salad engineer` session accepts multiple prompts in one ACP process. The rebuilt macOS carrier advertises ACP resume/close, restores across two processes, and rejects a mismatched workspace. Older carriers use the explicit fresh-continuation fallback | Linux/Windows native proof and reconnect/replay remain open |
+| Session resume | One `salad engineer` session accepts multiple prompts in one ACP process. The rebuilt macOS carrier and packaged native Linux x64/ARM64 carriers restore across two processes; mismatched workspaces are rejected | Windows native proof and replay/cancellation behavior remain open |
 | Background work/subagents | Corrected carrier source exposes DSH's `jobs` registry and `job_list`/`job_output`/`job_kill`; a real server was stopped through job control | Exact-release collaboration/job and native cross-platform cancellation evidence remain open |
-| Reconnect and replay | DSH persists an append-only session log and the CLI now persists run status/session ID; terminal output is not replayed by Salad itself | Resume must restore the model session, show the saved run state, and document that live output is re-rendered rather than replayed |
-| Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; confined shell network is deny-by-default, with explicit loopback-only mode for local servers | Prove the same boundary on Linux and Windows; add an explicit domain-allowlisted external network flow |
+| Reconnect and replay | DSH persists an append-only session log and the CLI now persists run status/session ID; native Linux x64/ARM64 release smoke restored the same session in a fresh process after both a normal turn and a simulated provider 503. Terminal output is not replayed by Salad itself | Show saved run state and document that live output is re-rendered rather than replayed; add cancellation matrix |
+| Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; macOS loopback mode works; native Linux x64/ARM64 smoke proves bubblewrap external-network denial | Linux explicitly rejects loopback mode until a real bridge exists; prove credential/file parity on Linux and Windows and add domain-allowlisted external network flow |
 | Installation and update | Checksums, managed carrier, and Unix rollback exist; Windows atomic replacement is staged for the next release | Release the Windows rollback change and test failed-update recovery on native Windows; signed provenance remains open |
 | Cross-platform behavior | Archives build; DSH carrier is not on Windows | Product capability is explicit per platform, not surprising |
 | Evidence and observability | Basic run receipts and command output exist | Every claim links to command/test/file evidence |
@@ -119,9 +119,12 @@ not enough that a single prompt can create a project.
 The rebuilt macOS carrier now denies model-controlled reads and writes of
 credential-shaped files such as `.env*`, `.ssh`, `.aws`, private-key files,
 and package credential files. Its confined shell commands also start with no
-network. Local servers use the narrower `--network loopback` capability;
-external access uses `--network allow`, both confirmed in the terminal for
-that run. A parent-shell `DSH_NETWORK_MODE=allow` or `loopback` is rejected.
+network. macOS local servers use the narrower `--network loopback`
+capability; external access uses `--network allow`. Linux currently rejects
+`--network loopback` because the native unprivileged bubblewrap namespace
+cannot create a usable localhost interface, so developers must choose whether
+to accept the broader mode. A parent-shell `DSH_NETWORK_MODE=allow` or
+`loopback` is rejected.
 External access is visible per-run approval, not yet a domain allowlist, so the
 final engineer release still needs an allowlisted network policy.
 

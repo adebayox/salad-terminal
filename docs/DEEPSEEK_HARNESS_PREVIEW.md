@@ -66,18 +66,19 @@ hatch `DEEPSEEK_API_KEY=...`; Salad never stores or forwards that key.
 
 The managed carrier protects common credential-shaped files from the model,
 including `.env*`, `.ssh`, `.aws`, private keys, and package credential files.
-Confined shell commands start with network disabled. For a local dev server or
-another operation that only needs localhost, request the narrower loopback
-capability per run:
+Confined shell commands start with network disabled. On macOS, for a local dev
+server or another operation that only needs localhost, request the narrower
+loopback capability per run:
 
 ```bash
 salad engineer --network loopback
 ```
 
-Loopback mode allows model-controlled commands to bind and connect to
-`localhost`/`127.0.0.1`, but does not grant internet access. For a trusted
-operation that genuinely needs external network access, request the broader
-capability per run:
+On macOS, loopback mode allows model-controlled commands to bind and connect
+to `localhost`/`127.0.0.1`, but does not grant internet access. Linux rejects
+this mode for now because its unprivileged bubblewrap namespace cannot create
+a usable loopback interface. On Linux, use the broader capability only when
+you explicitly accept internet access:
 
 ```text
 salad engineer --network allow "Install the dependencies and run the test suite"

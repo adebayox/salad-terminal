@@ -511,10 +511,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Reproduced the real v0.2.15 developer flow from the exact installed
   release. Collaboration, edit/test/build, persistent PTY, and cleanup work;
   default-deny networking incorrectly blocked even a localhost dev server.
-- [x] Added explicit `--network loopback` mode. It prompts visibly, allows
-  model-controlled processes to bind/connect to localhost, and keeps external
-  network access denied. `--network allow` remains the broader, separately
-  approved mode.
+- [x] Added explicit `--network loopback` mode for macOS. It prompts visibly,
+  allows model-controlled processes to bind/connect to localhost, and keeps
+  external network access denied. Linux now rejects that mode explicitly after
+  native bubblewrap proved it cannot create a usable loopback interface;
+  `--network allow` remains the broader, separately approved mode.
 - [x] Rebuilt the pinned macOS carrier from the audited DeepSeek source and
   verified the candidate against the real Node project: localhost HTTP passed,
   an external HTTPS probe failed under the candidate Seatbelt policy, and
@@ -524,3 +525,93 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   release install reproduce this matrix; native Linux loopback, Windows
   runtime, domain allowlisting, package provenance, reconnect/replay, and
   browser receipt work remain open.
+
+### v0.2.16 exact-release verification (2026-08-15)
+
+- [x] Published v0.2.16 after release CI passed the terminal and carrier
+  matrix; the exact release artifacts matched the public SHA256SUMS manifest.
+- [x] Ran the exact public installer against the verified v0.2.16 assets;
+  terminal version, managed carrier, spawn helper, and `harness doctor` all
+  passed. The installer preserved the previous managed runtime for rollback.
+- [x] Ran the exact v0.2.16 release in a separate real Node workspace:
+  delegated one read-only collaborator, edited a source file, passed four
+  project tests, passed the build command, started a persistent server, called
+  it from outside the harness, followed up in the same session, and closed
+  the process with the port gone afterward.
+- [x] Verified loopback-only behavior in the exact release: localhost worked
+  while an external HTTPS probe was denied. Explicit resume with a concrete
+  new request restored the prior ACP conversation and returned the stored
+  marker.
+- [x] Native Linux x64/ARM64 release smoke proved external network denial and
+  also proved the current unprivileged bubblewrap namespace cannot support
+  localhost (`Failed RTM_NEWADDR: Operation not permitted`). The CLI now
+  rejects Linux `--network loopback` rather than promising a broken dev-server
+  flow.
+- [x] Removed the empty synthetic prompt from no-argument interactive resume;
+  a local build now restores directly to `[salad engineer] >`, and an explicit
+  follow-up returned `RESUME_NO_EMPTY`.
+- [ ] Native Windows carrier and sandbox proof, domain-level network
+  allowlisting, package provenance, cancellation matrix, and browser receipt
+  verification remain release gates. Native Linux packaged session resume and
+  provider-error recovery are now verified. Normal Salad Chat remains outside
+  this work and has no changed files.
+
+### Fresh engineer workflow recheck (2026-08-15)
+
+- [x] Repeated the exact installed v0.2.16 flow against a fresh Node project
+  instead of relying on the earlier audit: project instructions were read,
+  `/health` was improved, the test passed, and the loopback approval path was
+  exercised.
+- [x] Rebuilt the pinned macOS carrier from DeepSeek commit
+  `47f943859bef60e4160492346772ded9b24f765a` after adding explicit guidance
+  for persistent terminal/job use and evidence-based reporting. The carrier
+  built successfully, a collaborator returned a concrete review, and a real
+  persistent terminal served port 4321, was checked externally, and was closed
+  with no listener remaining.
+- [x] Found and corrected the long-running command UX gap: the candidate now
+  gives an explicit `env PORT=...` example and verifies the actual listener.
+  A real Node server started on port 4324, returned `/health` over curl, and
+  both terminal sessions closed cleanly.
+- [x] Ran live cancellation against the rebuilt macOS candidate: a Python
+  server was externally confirmed on port 4322, Ctrl-C cancelled the engineer
+  run, and the child port closed without manual cleanup.
+- [ ] Publish the carrier guidance change and repeat the clean exact-release
+  workflow, including environment-based app startup, cancellation, and
+  cross-platform release checks.
+
+### Native Linux release smoke (2026-08-15)
+
+- [x] Rebased the engineer follow-up branch onto the published v0.2.16 main
+  commit; PR #14 is clean again.
+- [x] Ran the release matrix on native GitHub Linux x64/ARM runners. The six
+  terminal archives and four macOS/Linux carrier archives built successfully;
+  Windows terminal archives also built successfully.
+- [x] Added a release-gated Linux carrier smoke: boot the packaged carrier,
+  initialize ACP, create a session, complete a prompt through a local mock
+  DeepSeek endpoint, and prove bubblewrap denies external network access.
+- [x] Run the new smoke on the follow-up branch; release workflow
+  `31898110098` passed on native Linux x64 and ARM64. It booted the packaged
+  carrier through ACP against a local mock provider and passed the network
+  deny check on both architectures.
+- [x] Re-ran the corrected release workflow `31898839394` after making the
+  Linux loopback limitation explicit; terminal archives, carrier builds, and
+  both native Linux carrier smoke jobs passed.
+- [x] Native Windows runner evidence passed in release workflow
+  `31899990278`: the Windows terminal archive executed, engineer help stated
+  that normal Salad Chat is a separate path, and `harness doctor` reported the
+  missing DSH carrier explicitly. This validates the Windows terminal
+  boundary; it does not claim Windows engineer runtime support.
+- [x] Native Linux x64/ARM64 release workflow `31900302285` passed a packaged
+  cross-process session test: ACP initialized, the first prompt completed, the
+  session closed, a fresh carrier process resumed the same session, and the
+  second prompt completed with exactly two provider requests on each
+  architecture.
+- [x] Native Linux x64/ARM64 release workflow `31901155291` passed the
+  provider-recovery extension: a simulated 503 surfaced as an ACP error, the
+  session closed cleanly, a fresh carrier process resumed it, and a later
+  prompt succeeded. The carrier retried the failed provider call; both
+  architectures completed with six mock requests.
+- [ ] Add a native Windows DSH carrier and engineer runtime. DeepSeek's pinned
+  carrier builder currently supports Linux/macOS only, so Windows engineer
+  mode still needs an explicit product/runtime decision rather than a
+  misleading partial install.

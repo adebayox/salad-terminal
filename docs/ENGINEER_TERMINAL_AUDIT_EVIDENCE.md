@@ -7,6 +7,32 @@ chat, TUI, or SaladBE files were changed in this audit.
 
 ## Direct checks
 
+### Fresh installed-release recheck
+
+The exact installed `v0.2.16` release was exercised again against a fresh,
+dependency-free Node project rather than accepted from the earlier audit alone.
+The model read `AGENTS.md`, added `uptime_seconds` to `/health`, updated the
+test, and `npm test` passed after the run was explicitly started with
+`--network loopback`. A fresh run without loopback correctly failed to bind
+localhost, but the model did not clearly explain that recovery path.
+
+The public carrier did not reliably honor an environment assignment in a
+long-running command: it reported success while the app remained on its
+default port. This exposed a real developer-experience gap. The corrected
+candidate, rebuilt from the pinned DeepSeek commit with stronger persistent-
+terminal instructions, then opened a terminal, ran `python3 -m http.server
+4321 --bind 127.0.0.1`, verified it from another terminal, received the
+directory listing, and closed the terminal with no listener left behind. With
+the explicit `env PORT=4324 npm run start` guidance, the real Node app started
+on 4324, returned the health response over curl, and both terminal sessions
+closed cleanly. Its collaborator review returned a concrete health-endpoint
+finding. The candidate was restored afterward; the managed install is again
+the exact public `v0.2.16` runtime.
+
+The candidate also passed live cancellation: a Python server was externally
+confirmed on port 4322, Salad Terminal received Ctrl-C, the run became
+`cancelled`, and the port closed without manually killing the child.
+
 - `go test ./...`, `go vet ./...`, `bash -n tools/build-dsh-acp-carrier.sh`,
   and Python syntax compilation pass.
 - Public `v0.2.12` install was run in an isolated prefix. The terminal binary
@@ -31,10 +57,12 @@ chat, TUI, or SaladBE files were changed in this audit.
   8767, an external `curl` received HTTP 200, job control stopped it, and an
   external check confirmed the port was closed.
 - The default network-deny policy refused the first socket attempt. The
-  corrected candidate now uses explicit `--network loopback` approval for a
-  local server: localhost HTTP passed while an external HTTPS probe failed
-  under the Seatbelt profile. The authenticated provider bridge also completed
-  a real model turn through the candidate carrier.
+  corrected macOS candidate now uses explicit `--network loopback` approval
+  for a local server: localhost HTTP passed while an external HTTPS probe
+  failed under the Seatbelt profile. Native Linux bubblewrap does not currently
+  provide a usable loopback interface, so Linux rejects that mode instead of
+  silently running a broken local-server flow. The authenticated provider
+  bridge also completed a real model turn through the candidate carrier.
 - `salad engineer resume <run-id>` restored the same ACP conversation in a
   second process. The terminal conversation resumed, but the old OS process
   did not: closing the carrier correctly cleans up child processes. This is a
