@@ -231,8 +231,40 @@ jobs:
             --config smoke/unpack/cordis.yml \
             --workspace "$PWD/smoke/workspace"
 
+  terminal-smoke-windows:
+    needs: [release]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Salad Terminal
+        uses: actions/checkout@v6
+
+      - name: Download Windows terminal archive
+        uses: actions/download-artifact@v6
+        with:
+          name: terminal-windows-amd64
+          path: dist
+
+      - name: Verify Windows terminal and explicit engineer capability boundary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Expand-Archive -LiteralPath (Join-Path $PWD 'dist/salad-windows-amd64.zip') -DestinationPath (Join-Path $PWD 'smoke') -Force
+          $terminal = Join-Path $PWD 'smoke/salad.exe'
+          $version = & $terminal version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^salad ') {
+            throw "Windows terminal version check failed: $version"
+          }
+          $help = & $terminal engineer --help
+          if ($LASTEXITCODE -ne 0 -or $help -notmatch 'normal Salad chat is a separate product path') {
+            throw 'Windows engineer help/isolation contract failed'
+          }
+          $doctor = & $terminal harness doctor 2>&1
+          if ($LASTEXITCODE -eq 0 -or ($doctor -join "`n") -notmatch 'executable is unavailable|managed install: not installed') {
+            throw "Windows must report the missing engineer carrier explicitly: $($doctor -join "`n")"
+          }
+
   publish:
-    needs: [test, release, harness, harness-smoke-linux]
+    needs: [test, release, harness, harness-smoke-linux, terminal-smoke-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
