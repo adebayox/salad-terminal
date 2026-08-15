@@ -552,9 +552,9 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   follow-up returned `RESUME_NO_EMPTY`.
 - [ ] Native Windows carrier and sandbox proof, domain-level network
   allowlisting, package provenance, cancellation matrix, and browser receipt
-  verification remain release gates. Native Linux packaged session resume is
-  now verified. Normal Salad Chat remains outside this work and has no changed
-  files.
+  verification remain release gates. Native Linux packaged session resume and
+  provider-error recovery are now verified. Normal Salad Chat remains outside
+  this work and has no changed files.
 
 ### Native Linux release smoke (2026-08-15)
 
@@ -583,6 +583,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   session closed, a fresh carrier process resumed the same session, and the
   second prompt completed with exactly two provider requests on each
   architecture.
+- [x] Native Linux x64/ARM64 release workflow `31901155291` passed the
+  provider-recovery extension: a simulated 503 surfaced as an ACP error, the
+  session closed cleanly, a fresh carrier process resumed it, and a later
+  prompt succeeded. The carrier retried the failed provider call; both
+  architectures completed with six mock requests.
 - [ ] Add a native Windows DSH carrier and engineer runtime. DeepSeek's pinned
   carrier builder currently supports Linux/macOS only, so Windows engineer
   mode still needs an explicit product/runtime decision rather than a
