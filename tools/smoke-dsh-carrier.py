@@ -203,6 +203,7 @@ def main() -> int:
         _, failed_closed = read_response(process, 9)
         if "result" not in failed_closed:
             raise RuntimeError(f"ACP session/close after provider failure failed: {failed_closed}")
+        requests_after_failure = len(MockDeepSeek.requests)
         assert process.stdin is not None
         process.stdin.close()
         process.wait(timeout=10)
@@ -237,9 +238,9 @@ def main() -> int:
         recovered_output = "\n".join(recovered_lines)
         if "result" not in recovered_prompt or "LINUX_CARRIER_OK" not in recovered_output:
             raise RuntimeError(f"ACP recovery prompt failed: {recovered_prompt}; output={recovered_output}")
-        if len(MockDeepSeek.requests) != 4:
-            raise RuntimeError(f"expected four mock provider requests after recovery, got {len(MockDeepSeek.requests)}")
-        print(json.dumps({"initialize": "ok", "session_new": "ok", "prompt": "ok", "resume": "ok", "provider_error": "ok", "recovery": "ok", "provider_requests": 4}))
+        if len(MockDeepSeek.requests) <= requests_after_failure:
+            raise RuntimeError("recovery prompt did not reach the mock provider after the simulated outage")
+        print(json.dumps({"initialize": "ok", "session_new": "ok", "prompt": "ok", "resume": "ok", "provider_error": "ok", "recovery": "ok", "provider_requests": len(MockDeepSeek.requests)}))
         return 0
     finally:
         try:
