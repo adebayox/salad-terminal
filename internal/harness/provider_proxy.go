@@ -117,6 +117,18 @@ func (p *ProviderProxy) handle(parent context.Context, client *api.Client, provi
 			response, err = doUpstream()
 		}
 	}
+	if shouldRetryProvider(response, err) && requestCtx.Err() == nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-requestCtx.Done():
+			timer.Stop()
+		case <-timer.C:
+			response, err = doUpstream()
+		}
+	}
 	if err != nil {
 		http.Error(w, "provider request failed", http.StatusBadGateway)
 		return
@@ -133,6 +145,18 @@ func (p *ProviderProxy) handle(parent context.Context, client *api.Client, provi
 	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, response.Body)
+}
+
+func shouldRetryProvider(response *http.Response, err error) bool {
+	if err != nil {
+		return true
+	}
+	if response == nil {
+		return true
+	}
+	return response.StatusCode == http.StatusBadGateway ||
+		response.StatusCode == http.StatusServiceUnavailable ||
+		response.StatusCode == http.StatusGatewayTimeout
 }
 
 // relayProviderStream holds only the initial SSE prelude until the first data
