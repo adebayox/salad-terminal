@@ -33,3 +33,15 @@ func TestValidateEngineerNetworkMode(t *testing.T) {
 		})
 	}
 }
+
+func TestHarnessReceiptChatIDIsExplicitOptIn(t *testing.T) {
+	if got := harnessReceiptChatID("", ""); got != "" {
+		t.Fatalf("implicit receipt chat = %q, want empty", got)
+	}
+	if got := harnessReceiptChatID("", "env-chat"); got != "env-chat" {
+		t.Fatalf("environment receipt chat = %q, want env-chat", got)
+	}
+	if got := harnessReceiptChatID("flag-chat", "env-chat"); got != "flag-chat" {
+		t.Fatalf("explicit receipt chat = %q, want flag-chat", got)
+	}
+}
