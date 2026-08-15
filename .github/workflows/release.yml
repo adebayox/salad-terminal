@@ -259,9 +259,13 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $helpText -notmatch 'normal Salad chat is a separate product path') {
             throw 'Windows engineer help/isolation contract failed'
           }
+          $ErrorActionPreference = 'Continue'
           $doctor = & $terminal harness doctor 2>&1
-          if ($LASTEXITCODE -eq 0 -or ($doctor -join "`n") -notmatch 'executable is unavailable|managed install: not installed') {
-            throw "Windows must report the missing engineer carrier explicitly: $($doctor -join "`n")"
+          $doctorExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          $doctorText = $doctor -join "`n"
+          if ($doctorExit -eq 0 -or $doctorText -notmatch 'executable is unavailable|managed install: not installed') {
+            throw "Windows must report the missing engineer carrier explicitly: $doctorText"
           }
 
   publish:
