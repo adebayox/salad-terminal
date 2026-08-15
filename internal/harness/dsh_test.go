@@ -95,6 +95,9 @@ func TestRunACPStartsFreshWhenSessionIDWasNotRequested(t *testing.T) {
 	if result.SessionID != "fresh-acp-session" || !strings.Contains(output.String(), "fresh response") {
 		t.Fatalf("session = %q output = %q", result.SessionID, output.String())
 	}
+	if strings.Contains(output.String(), "carrier does not advertise session restore") {
+		t.Fatalf("fresh run incorrectly reported a restore fallback: %q", output.String())
+	}
 }
 
 func TestRunCancellationReapsChild(t *testing.T) {

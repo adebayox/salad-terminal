@@ -253,7 +253,7 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 		}
 		sessionID = opts.SessionID
 	} else {
-		if opts.SessionID != "" {
+		if resumeRequested {
 			fmt.Fprintln(opts.Output, "[engineer] carrier does not advertise session restore; starting a fresh continuation")
 		}
 		newSessionParams, err := request("2", "session/new", map[string]any{

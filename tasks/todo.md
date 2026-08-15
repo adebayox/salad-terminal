@@ -395,3 +395,26 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   provider verification, then close the remaining Linux/Windows native safety,
   domain-allowlist, long-lived process, reconnect/replay, and receipt-browser
   gates.
+
+### Live provider promotion follow-up (2026-08-15)
+
+- [x] Identified the 404 as a deployment-source problem: current production
+  `main` did not contain the staging harness work, while staging already served
+  the protected provider route.
+- [x] Promoted only the additive provider gateway and one authenticated,
+  rate-limited route to production. Lifecycle receipt/realtime files and normal
+  chat routing were intentionally excluded.
+- [x] SaladBE PR #106 passed the full backend test, vet, build, lint, and
+  document-compiler checks and was merged to `main` as `b71fe3c`.
+- [ ] Verify the production deployment and run the installed CLI against the
+  live provider route. A route returning 401 without auth is expected; 404 is
+  not.
+- [x] Ran a real human-style engineer workflow against staging with the
+  installed candidate carrier: read `AGENTS.md`, explain the failing test,
+  wait for approval, edit only `main.go`, run `gofmt`, `go test ./...`,
+  `go build ./...`, run the program, review the diff, close with Ctrl-D, and
+  resume from a second process. The workflow produced `Hello, Salad!`, changed
+  only `main.go`, and restored the final answer from the saved run.
+- [x] Fixed the misleading fresh-run message found during that live workflow:
+  the adapter now reports a restore fallback only when the user actually
+  requested a saved-session resume.
