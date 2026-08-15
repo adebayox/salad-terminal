@@ -255,7 +255,8 @@ jobs:
             throw "Windows terminal version check failed: $version"
           }
           $help = & $terminal engineer --help
-          if ($LASTEXITCODE -ne 0 -or $help -notmatch 'normal Salad chat is a separate product path') {
+          $helpText = $help -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $helpText -notmatch 'normal Salad chat is a separate product path') {
             throw 'Windows engineer help/isolation contract failed'
           }
           $doctor = & $terminal harness doctor 2>&1
