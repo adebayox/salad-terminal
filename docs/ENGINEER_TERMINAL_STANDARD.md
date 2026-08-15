@@ -101,7 +101,7 @@ The terminal reaches flow state only when the following are reliable:
 | Interactive processes and dev servers | Carrier cancellation now kills the full Unix process group; a complete start/view/restart UX is not proven | Start, view logs, stop, restart, and clean up |
 | Git branch/commit/PR workflow | Read-only inspection is present | Writes are explicit, reviewable, and recoverable |
 | Approval policy | Present in both paths, with different semantics | One policy model; low-risk auto-run, high-risk review |
-| Session resume | One `salad engineer` session accepts multiple prompts in one ACP process. The rebuilt macOS candidate advertises ACP resume/close, restores across two processes, and rejects a mismatched workspace. Older public carriers use the explicit fresh-continuation fallback | Publish the patched carrier and repeat the smoke from the clean release installer |
+| Session resume | One `salad engineer` session accepts multiple prompts in one ACP process. The rebuilt macOS carrier advertises ACP resume/close, restores across two processes, and rejects a mismatched workspace. Older carriers use the explicit fresh-continuation fallback | Linux/Windows native proof and reconnect/replay remain open |
 | Background work/subagents | DSH config contains plugins; terminal UX is not proven | List, inspect, interrupt, and receive completion reliably |
 | Reconnect and replay | Receipt events exist; local DSH run record is thin | No silent stall after disconnect; replay is deterministic |
 | Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; confined shell network is deny-by-default there | Prove the same boundary on Linux and Windows; add an explicit allowlisted network approval flow |
@@ -123,7 +123,7 @@ the terminal for that run; a parent-shell `DSH_NETWORK_MODE=allow` is rejected.
 This is visible per-run approval, not yet a domain allowlist, so the final
 engineer release still needs an allowlisted network policy.
 
-The current v0.2.11 package is also materially heavier when the DSH carrier is
+The current v0.2.12 package is also materially heavier when the DSH carrier is
 installed: the normal terminal binary is about 15 MB uncompressed, while the
 macOS arm64 DSH carrier is about 198 MB uncompressed and 53.8 MB compressed.
 That is acceptable for a preview only if the installer says so and offers a
