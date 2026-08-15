@@ -74,6 +74,7 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 	inputReader := bufio.NewReader(opts.Input)
 
 	cmd := exec.Command(opts.Command, opts.Args...)
+	prepareProcessGroup(cmd)
 	cmd.Dir = opts.Cwd
 	cmd.Env = scrubbedEnvironment(withHarnessSafetyDefaults(opts.Env, opts.Cwd))
 	stdin, err := cmd.StdinPipe()
@@ -154,7 +155,7 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 			select {
 			case <-finished:
 			case <-time.After(3 * time.Second):
-				killOnce.Do(func() { _ = cmd.Process.Kill() })
+				killOnce.Do(func() { _ = killProcessTree(cmd) })
 			}
 		case <-finished:
 		}

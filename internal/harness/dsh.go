@@ -117,6 +117,7 @@ func Run(ctx context.Context, opts Options, prompt string) (Result, error) {
 	}
 
 	cmd := exec.Command(opts.Command, opts.Args...)
+	prepareProcessGroup(cmd)
 	cmd.Dir, cmd.Env = opts.Cwd, scrubbedEnvironment(withHarnessSafetyDefaults(opts.Env, opts.Cwd))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -146,7 +147,7 @@ func Run(ctx context.Context, opts Options, prompt string) (Result, error) {
 			select {
 			case <-finished:
 			case <-time.After(3 * time.Second):
-				killOnce.Do(func() { _ = cmd.Process.Kill() })
+				killOnce.Do(func() { _ = killProcessTree(cmd) })
 			}
 		case <-finished:
 		}

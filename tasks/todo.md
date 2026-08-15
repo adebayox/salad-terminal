@@ -296,3 +296,23 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - Verification still required: run two separate invocations through a
   packaged JSON-RPC carrier and prove the second sees the first session's
   durable history; the carrier executed in this slice was ACP.
+
+### Engineer-terminal runtime verification follow-up (2026-08-15)
+
+- [x] Correct the outside-write negative test: `/private/tmp` is an allowed OS
+  temporary area under DSH `workspace-write`, so the test now targets a path
+  outside both the trusted workspace and temporary roots. The real installed
+  carrier denied it and the file was absent.
+- [x] Run the real installed carrier through a disposable project workflow after
+  the safety changes. The model-created project recovered from a failed build,
+  reran the build, and independent `npm run build` plus output checks passed.
+- [x] Run the real ACP carrier cancellation path with a 60-second child
+  process. The first run exposed an orphaned `sleep` process; the parent now
+  launches the carrier in its own process group and kills that group on the
+  bounded cancellation fallback. The rerun exited as cancelled with no child
+  process remaining.
+- [ ] Build and run the packaged JSON-RPC carrier twice to prove durable
+  session restore. ACP remains the verified interactive path; JSON-RPC remains
+  a compatibility path until this evidence exists.
+- [ ] Prove Linux and Windows carrier safety on native runners, and replace the
+  preview's broad network escape hatch with visible allowlisted approval.
