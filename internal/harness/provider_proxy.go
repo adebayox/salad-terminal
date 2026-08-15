@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -126,6 +127,61 @@ func (p *ProviderProxy) handle(parent context.Context, client *api.Client, provi
 			w.Header().Add(key, value)
 		}
 	}
+	if envelope.Stream && response.StatusCode == http.StatusOK && strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		p.relayProviderStream(w, response.Body)
+		return
+	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, response.Body)
+}
+
+// relayProviderStream holds only the initial SSE prelude until the first data
+// event is known to be a completion. The Salad backend uses HTTP 200 so it can
+// send keepalives while a provider works; when the provider fails, it emits a
+// structured SSE error after those keepalives. Translating that case back to a
+// real HTTP error prevents DSH from misreporting the failure as an empty model
+// response.
+func (p *ProviderProxy) relayProviderStream(w http.ResponseWriter, body io.Reader) {
+	// The upstream may advertise a content length for the original stream;
+	// error translation changes the body and must let net/http frame it.
+	w.Header().Del("Content-Length")
+	reader := bufio.NewReader(body)
+	var prelude strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		prelude.WriteString(line)
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "data:") {
+			if code, ok := providerStreamErrorCode(strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))); ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, `{"error":"Salad model provider request failed","code":"`+code+`"}`)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, prelude.String())
+			_, _ = io.Copy(w, reader)
+			return
+		}
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, `{"error":"Salad model provider stream ended unexpectedly"}`)
+			return
+		}
+	}
+}
+
+func providerStreamErrorCode(data string) (string, bool) {
+	if data == "" || data == "[DONE]" {
+		return "", false
+	}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(data), &envelope); err != nil || strings.TrimSpace(envelope.Error.Code) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(envelope.Error.Code), true
 }
