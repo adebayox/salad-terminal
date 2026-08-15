@@ -179,8 +179,60 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  harness-smoke-linux:
+    needs: [harness]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout Salad Terminal
+        uses: actions/checkout@v6
+
+      - name: Download Linux carrier
+        uses: actions/download-artifact@v6
+        with:
+          name: harness-linux-${{ matrix.arch }}
+          path: dist
+
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap
+
+      - name: Prove Linux network deny boundary
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          if bwrap --ro-bind / / --dev /dev --proc /proc --die-with-parent --unshare-net \
+            -- python3 -c 'import socket; socket.create_connection(("1.1.1.1", 443), 2)' \
+            >"$work/stdout" 2>"$work/stderr"; then
+            echo 'network unexpectedly reachable inside deny profile' >&2
+            exit 1
+          fi
+          grep -Eqi 'network|resolve|unreachable|timed out|refused|operation not permitted' "$work/stderr" || {
+            cat "$work/stderr" >&2
+            echo 'network denial did not produce a recognized failure' >&2
+            exit 1
+          }
+
+      - name: Boot packaged Linux carrier through ACP
+        run: |
+          set -euo pipefail
+          archive="dist/salad-harness-linux-${{ matrix.arch }}.tar.gz"
+          mkdir -p smoke/unpack smoke/workspace
+          tar -xzf "$archive" -C smoke/unpack
+          python3 tools/smoke-dsh-carrier.py \
+            --carrier "smoke/unpack/dsh-acp-agent-linux-${{ matrix.arch }}" \
+            --config smoke/unpack/cordis.yml \
+            --workspace "$PWD/smoke/workspace"
+
   publish:
-    needs: [test, release, harness]
+    needs: [test, release, harness, harness-smoke-linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

@@ -548,3 +548,18 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   allowlisting, package provenance, reconnect/replay, cancellation matrix,
   and browser receipt verification remain release gates. Normal Salad Chat
   remains outside this work and has no changed files.
+
+### Native Linux release smoke (2026-08-15)
+
+- [x] Rebased the engineer follow-up branch onto the published v0.2.16 main
+  commit; PR #14 is clean again.
+- [x] Ran the release matrix on native GitHub Linux x64/ARM runners. The six
+  terminal archives and four macOS/Linux carrier archives built successfully;
+  Windows terminal archives also built successfully.
+- [x] Added a release-gated Linux carrier smoke: boot the packaged carrier,
+  initialize ACP, create a session, complete a prompt through a local mock
+  DeepSeek endpoint, and prove bubblewrap denies external network access.
+- [ ] Run the new smoke on the follow-up branch and add native Windows
+  installer/runtime evidence. DeepSeek's pinned carrier builder currently
+  supports Linux/macOS only, so Windows engineer mode still needs an explicit
+  product/runtime decision rather than a misleading partial install.
