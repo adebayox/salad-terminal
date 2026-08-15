@@ -524,3 +524,27 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   release install reproduce this matrix; native Linux loopback, Windows
   runtime, domain allowlisting, package provenance, reconnect/replay, and
   browser receipt work remain open.
+
+### v0.2.16 exact-release verification (2026-08-15)
+
+- [x] Published v0.2.16 after release CI passed the terminal and carrier
+  matrix; the exact release artifacts matched the public SHA256SUMS manifest.
+- [x] Ran the exact public installer against the verified v0.2.16 assets;
+  terminal version, managed carrier, spawn helper, and `harness doctor` all
+  passed. The installer preserved the previous managed runtime for rollback.
+- [x] Ran the exact v0.2.16 release in a separate real Node workspace:
+  delegated one read-only collaborator, edited a source file, passed four
+  project tests, passed the build command, started a persistent server, called
+  it from outside the harness, followed up in the same session, and closed
+  the process with the port gone afterward.
+- [x] Verified loopback-only behavior in the exact release: localhost worked
+  while an external HTTPS probe was denied. Explicit resume with a concrete
+  new request restored the prior ACP conversation and returned the stored
+  marker.
+- [x] Removed the empty synthetic prompt from no-argument interactive resume;
+  a local build now restores directly to `[salad engineer] >`, and an explicit
+  follow-up returned `RESUME_NO_EMPTY`.
+- [ ] Native Linux/Windows carrier and sandbox proof, domain-level network
+  allowlisting, package provenance, reconnect/replay, cancellation matrix,
+  and browser receipt verification remain release gates. Normal Salad Chat
+  remains outside this work and has no changed files.

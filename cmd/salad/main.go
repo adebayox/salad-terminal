@@ -369,6 +369,7 @@ func runHarnessMode(args []string, interactive bool) error {
 			return fmt.Errorf("resume must run from the original workspace: %s", record.Workspace)
 		}
 		resumeOf = record.ID
+		resumePrompt := strings.TrimSpace(strings.Join(args[2:], " "))
 		args = append([]string{"--protocol", record.Protocol}, args[2:]...)
 		if record.Command != "" {
 			args = append([]string{"--command", record.Command}, args...)
@@ -379,7 +380,10 @@ func runHarnessMode(args []string, interactive bool) error {
 		if record.SessionID != "" {
 			args = append([]string{"--session", record.SessionID}, args...)
 		}
-		if record.Protocol != "jsonrpc" {
+		// An interactive resume with no new request should restore the session
+		// and wait at the engineer prompt. Sending a synthetic empty turn makes
+		// the model ask for a goal before the developer can type one.
+		if record.Protocol != "jsonrpc" && resumePrompt != "" {
 			args = append([]string{"Continue the previous Salad Harness run. Previous request: " + record.Prompt + ". New request:"}, args...)
 		}
 	}
