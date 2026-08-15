@@ -351,3 +351,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   parent-shell allow is rejected and the default remains deny.
 - [ ] Prove Linux and Windows carrier safety on native runners, and replace the
   visible per-run network approval with a domain allowlist.
+- [x] Make `salad engineer` the single user-facing local-agent entry point:
+  one ACP process accepts multiple follow-up prompts, handles approvals in the
+  same session, and shuts down cleanly on Ctrl-D. Keep `salad harness` only as
+  the compatibility path for installation, diagnostics, JSON-RPC, and older
+  one-shot scripts. Normal Salad Chat remains outside this path.
+- [ ] Make the interactive engineer session resume across processes with a
+  real packaged carrier capability, then add reconnect/replay and long-lived
+  process controls before calling the engineer mode production-ready.

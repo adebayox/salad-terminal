@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -58,6 +59,25 @@ func TestRunACPUsesAdvertisedSessionRestore(t *testing.T) {
 	}
 	if result.SessionID != "saved-session" || !strings.Contains(output.String(), "ACP resumed response") {
 		t.Fatalf("session = %q output = %q", result.SessionID, output.String())
+	}
+}
+
+func TestRunACPInteractiveKeepsOneSessionAcrossPrompts(t *testing.T) {
+	var output strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := RunACPInteractive(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPInteractive"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp-interactive"}, Input: strings.NewReader("first request\nsecond request\n"), Output: &output,
+	}, "")
+	if err != nil {
+		t.Fatalf("RunACPInteractive() error = %v", err)
+	}
+	if result.SessionID != "interactive-acp-session" {
+		t.Fatalf("RunACPInteractive() session = %q", result.SessionID)
+	}
+	if !strings.Contains(output.String(), "response 1") || !strings.Contains(output.String(), "response 2") {
+		t.Fatalf("output = %q", output.String())
 	}
 }
 
@@ -239,6 +259,44 @@ func TestHarnessFakeACPResume(t *testing.T) {
 				},
 			}})
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "result": map[string]string{"stopReason": "end_turn"}})
+			return
+		}
+	}
+}
+
+func TestHarnessFakeACPInteractive(t *testing.T) {
+	if os.Getenv("SALAD_DSH_TEST_HELPER") != "acp-interactive" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	promptCount := 0
+	for scanner.Scan() {
+		var frame map[string]any
+		if json.Unmarshal(scanner.Bytes(), &frame) != nil {
+			continue
+		}
+		method, _ := frame["method"].(string)
+		id := frame["id"]
+		switch method {
+		case "initialize":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{
+				"protocolVersion": 1, "agentCapabilities": map[string]any{"sessionCapabilities": map[string]any{"close": map[string]any{}}},
+			}})
+		case "session/new":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]string{"sessionId": "interactive-acp-session"}})
+		case "session/prompt":
+			promptCount++
+			params, _ := frame["params"].(map[string]any)
+			sessionID, _ := params["sessionId"].(string)
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+				"sessionId": sessionID, "update": map[string]any{
+					"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": fmt.Sprintf("response %d", promptCount)},
+				},
+			}})
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]string{"stopReason": "end_turn"}})
+		case "session/close":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}})
 			return
 		}
 	}

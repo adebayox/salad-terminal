@@ -1,9 +1,9 @@
 # DeepSeek Harness preview
 
-Salad Terminal now has an opt-in bridge to DeepSeek Harness. This is a local
-developer preview; it is not the normal Salad chat engine. The interactive
-bridge uses DeepSeek's ACP interface because it supports approval decisions
-and cancellation.
+Salad Terminal has one engineer-facing command backed by a local DeepSeek
+Harness preview. This is not a second terminal and it is not the normal Salad
+chat engine. The engineer command keeps one ACP process alive for follow-up
+prompts, approvals, and cancellation.
 
 ## What is unchanged
 
@@ -18,7 +18,8 @@ salad resume <chat-id>
 salad say "..."
 ```
 
-The preview does not create messages or enter Salad's normal AI router. If a
+The engineer session does not create messages or enter Salad's normal AI
+router. If a
 chat is active, it may publish a small lifecycle receipt through
 the authenticated `/api/harness/events` endpoint. That receipt contains a
 run ID, opaque workspace ID, status, and short summary; it does not contain
@@ -43,9 +44,22 @@ select one explicitly:
 
 ```text
 salad login
-salad harness --salad-provider openai \
+salad engineer --salad-provider openai \
   "Inspect the tests, show a plan first, and do not edit yet."
 ```
+
+For the normal engineer workflow, leave the prompt off and keep the session
+open:
+
+```text
+salad engineer
+[salad engineer] > read the project instructions and summarize the architecture
+[salad engineer] > now make the smallest fix and run the focused tests
+```
+
+The same local ACP session receives both prompts. Ctrl-C cancels the active
+turn and Ctrl-D ends the session cleanly. `salad harness` remains the
+compatibility name for one-shot and carrier-management commands.
 
 Developers who intentionally use a direct DeepSeek key can use the escape
 hatch `DEEPSEEK_API_KEY=...`; Salad never stores or forwards that key.
@@ -56,7 +70,7 @@ Confined shell commands start with network disabled. For a trusted operation
 that genuinely needs network access, request it per run:
 
 ```text
-salad harness --network allow "Install the dependencies and run the test suite"
+salad engineer --network allow "Install the dependencies and run the test suite"
 ```
 
 Salad prints a warning and asks for confirmation before starting that run.
@@ -78,7 +92,7 @@ an existing carrier unless `--force` is supplied:
 ```text
 salad harness install --runtime /path/to/dsh-acp-agent --config /path/to/cordis.yml
 salad harness doctor
-salad harness "read the project instructions, inspect the tests, and make a plan"
+salad engineer "read the project instructions, inspect the tests, and make a plan"
 salad harness rollback
 ```
 
@@ -88,7 +102,8 @@ realtime events, not messages, so they do not trigger normal Salad AI
 routing. A signed-out account can still use the direct-key escape hatch;
 otherwise the authenticated Salad provider bridge is required.
 
-Each ACP run receives a local run ID. Continue a previous run explicitly with:
+Each engineer session receives a local run ID. Continue a previous run
+explicitly with:
 
 ```text
 salad harness resume <run-id> "Now run the focused test and explain the result"

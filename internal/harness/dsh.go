@@ -31,6 +31,7 @@ type Options struct {
 	Command, Cwd, Provider, Model, SessionID string
 	Args, Env                                []string
 	Input                                    io.Reader
+	InputCloser                              io.Closer
 	Output                                   io.Writer
 }
 

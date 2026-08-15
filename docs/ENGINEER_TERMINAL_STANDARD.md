@@ -13,17 +13,24 @@ process on a developer's machine.
 DeepSeek Harness is an execution engine inside Salad Terminal. It is not a
 second terminal product and it is not a replacement for Salad Chat.
 
-The current repository has two internal execution paths:
+The current repository has two product surfaces, but only one local-agent
+path for engineers:
 
 1. The existing terminal chat path sends a normal Salad message. SaladBE runs
    the model loop and sends local tool requests back to the terminal for
    approval and execution.
-2. The preview harness path starts DeepSeek Harness locally. DSH owns the
+2. The engineer path (`salad engineer`) starts DeepSeek Harness locally. DSH owns the
    model/tool loop and Salad provides the provider bridge and run receipts.
 
-That split was a deliberate safety boundary while the harness was being
-verified: the new runtime was opt-in, isolated, and unable to change normal
-chat. It is a transition architecture, not the finished engineer experience.
+`salad harness` is a compatibility alias for one-shot runs and carrier
+management. It is not a second developer product. The engineer command keeps
+one ACP process alive for follow-up prompts; normal Salad Chat remains on its
+existing path and is not involved.
+
+Keeping Salad Chat outside the local-agent path is a deliberate safety
+boundary: the new runtime is isolated and cannot change normal chat. The
+runtime adapter is still a transition architecture, but the engineer now has
+one user-facing entry point.
 
 The finished product should have one terminal entry point and one shared
 workspace policy. The runtime behind it may be replaceable, but the developer
@@ -94,7 +101,7 @@ The terminal reaches flow state only when the following are reliable:
 | Interactive processes and dev servers | Carrier cancellation now kills the full Unix process group; a complete start/view/restart UX is not proven | Start, view logs, stop, restart, and clean up |
 | Git branch/commit/PR workflow | Read-only inspection is present | Writes are explicit, reviewable, and recoverable |
 | Approval policy | Present in both paths, with different semantics | One policy model; low-risk auto-run, high-risk review |
-| Session resume | Run records retain the actual ACP session ID; the adapter uses ACP load/resume when the carrier advertises it. The pinned DSH preview does not, so its fallback is an explicit fresh continuation. JSON-RPC runs reuse private persisted DSH sessions | The shipped carrier must advertise and pass a real ACP restore smoke before this gate closes |
+| Session resume | One `salad engineer` session now accepts multiple prompts in one ACP process. Run records retain the actual ACP session ID; cross-process restore uses ACP load/resume only when the carrier advertises it. The pinned DSH preview does not, so its fallback is an explicit fresh continuation. JSON-RPC runs reuse private persisted DSH sessions | The shipped carrier must advertise and pass a real ACP restore smoke before this gate closes |
 | Background work/subagents | DSH config contains plugins; terminal UX is not proven | List, inspect, interrupt, and receive completion reliably |
 | Reconnect and replay | Receipt events exist; local DSH run record is thin | No silent stall after disconnect; replay is deterministic |
 | Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; confined shell network is deny-by-default there | Prove the same boundary on Linux and Windows; add an explicit allowlisted network approval flow |

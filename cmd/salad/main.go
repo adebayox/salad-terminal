@@ -77,6 +77,12 @@ func run(args []string) error {
 			return nil
 		}
 		return runHarness(rest)
+	case "engineer":
+		if hasHelp(rest) {
+			printCommandUsage("engineer")
+			return nil
+		}
+		return runEngineer(rest)
 	case "update":
 		if hasHelp(rest) {
 			printCommandUsage("update")
@@ -310,13 +316,25 @@ func requireInteractive(command string) error {
 }
 
 func runHarness(args []string) error {
-	if len(args) == 0 {
+	return runHarnessMode(args, false)
+}
+
+func runEngineer(args []string) error {
+	return runHarnessMode(args, true)
+}
+
+func runHarnessMode(args []string, interactive bool) error {
+	surface := "salad harness"
+	if interactive {
+		surface = "salad engineer"
+	}
+	if len(args) == 0 && !interactive {
 		return fmt.Errorf("usage: salad harness [install|rollback|doctor|options] <prompt>")
 	}
-	if args[0] == "install" {
+	if len(args) > 0 && args[0] == "install" {
 		return runHarnessInstall(args[1:])
 	}
-	if args[0] == "rollback" {
+	if len(args) > 0 && args[0] == "rollback" {
 		if len(args) != 1 {
 			return fmt.Errorf("usage: salad harness rollback")
 		}
@@ -328,7 +346,7 @@ func runHarness(args []string) error {
 		return nil
 	}
 	resumeOf := ""
-	if args[0] == "resume" {
+	if len(args) > 0 && args[0] == "resume" {
 		if len(args) < 2 {
 			return fmt.Errorf("usage: salad harness resume <run-id> <prompt>")
 		}
@@ -355,7 +373,7 @@ func runHarness(args []string) error {
 			args = append([]string{"Continue the previous Salad Harness run. Previous request: " + record.Prompt + ". New request:"}, args...)
 		}
 	}
-	if args[0] == "doctor" {
+	if len(args) > 0 && args[0] == "doctor" {
 		if len(args) != 1 {
 			return fmt.Errorf("harness doctor does not take options; use `salad help harness`")
 		}
@@ -404,6 +422,9 @@ func runHarness(args []string) error {
 	if protocol != "acp" && protocol != "jsonrpc" {
 		return fmt.Errorf("unsupported harness protocol %q; choose acp or jsonrpc", protocol)
 	}
+	if interactive && protocol != "acp" {
+		return errors.New("salad engineer uses the ACP session runtime; jsonrpc is available only through `salad harness`")
+	}
 	if networkMode != "deny" && networkMode != "allow" {
 		return fmt.Errorf("unsupported harness network mode %q; choose deny or allow", networkMode)
 	}
@@ -411,13 +432,15 @@ func runHarness(args []string) error {
 		return fmt.Errorf("network access is denied by default; pass `--network allow` to request it for this run")
 	}
 	if len(prompt) == 0 {
-		return fmt.Errorf("harness prompt cannot be empty")
+		if !interactive {
+			return fmt.Errorf("harness prompt cannot be empty")
+		}
 	}
 	root, err := workspace.EnsureTrusted("")
 	if err != nil {
 		return err
 	}
-	if err := requireInteractive("salad harness"); err != nil {
+	if err := requireInteractive(surface); err != nil {
 		return err
 	}
 	input := io.Reader(os.Stdin)
@@ -437,7 +460,7 @@ func runHarness(args []string) error {
 	}
 	opts := harness.Options{
 		Command: command, Provider: provider, Model: model, SessionID: sessionID, Cwd: root,
-		Input: input, Output: os.Stdout,
+		Input: input, InputCloser: os.Stdin, Output: os.Stdout,
 	}
 	if configPath == "" {
 		configPath = firstNonEmpty(harness.InstalledConfig(), os.Getenv("SALAD_DSH_CONFIG"), os.Getenv("DSH_CORDIS_CONFIG"))
@@ -471,7 +494,11 @@ func runHarness(args []string) error {
 		opts.Env = append(opts.Env, providerProxy.Environment()...)
 	}
 	workspaceID, _ := workspace.OpaqueID(root)
-	runID := fmt.Sprintf("salad-harness-%d", time.Now().UnixNano())
+	runPrefix := "salad-harness"
+	if interactive {
+		runPrefix = "salad-engineer"
+	}
+	runID := fmt.Sprintf("%s-%d", runPrefix, time.Now().UnixNano())
 	if protocol == "jsonrpc" && sessionID == "" {
 		sessionID = "salad-" + runID
 	}
@@ -485,8 +512,16 @@ func runHarness(args []string) error {
 		}
 	}
 	opts.SessionID = sessionID
-	fmt.Printf("[harness] run id: %s\n", runID)
-	runRecord := harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: strings.Join(prompt, " "), StartedAt: time.Now().UTC(), ResumeOf: resumeOf}
+	displayName := "harness"
+	if interactive {
+		displayName = "engineer"
+	}
+	fmt.Printf("[%s] run id: %s\n", displayName, runID)
+	recordPrompt := strings.Join(prompt, " ")
+	if recordPrompt == "" {
+		recordPrompt = "(interactive engineer session)"
+	}
+	runRecord := harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: recordPrompt, StartedAt: time.Now().UTC(), ResumeOf: resumeOf}
 	if err := harness.SaveRun(runRecord); err != nil {
 		return fmt.Errorf("save harness run record: %w", err)
 	}
@@ -505,6 +540,8 @@ func runHarness(args []string) error {
 	var result harness.Result
 	if protocol == "jsonrpc" {
 		result, err = harness.Run(runContext, opts, strings.Join(prompt, " "))
+	} else if interactive {
+		result, err = harness.RunACPInteractive(runContext, opts, strings.Join(prompt, " "))
 	} else {
 		result, err = harness.RunACP(runContext, opts, strings.Join(prompt, " "))
 	}
@@ -801,7 +838,7 @@ Other:
   salad update          Install the latest release
   salad version         Show the installed version
   salad doctor          Check sign-in, API, and workspace setup
-  salad harness         Run the opt-in DeepSeek Harness preview
+  salad engineer        Work with an agent in this trusted workspace
 
 Run salad <command> --help for command details.
 `, Version)
@@ -891,6 +928,19 @@ or change your normal Salad chat. "salad harness doctor" checks the setup.
   --salad-provider <name> Salad provider for the authenticated local bridge
   --session <id>          Reuse a JSON-RPC session across runs
   --chat <id>             Share run start/finish with this Salad chat
+`)
+	case "engineer":
+		fmt.Print(`Usage: salad engineer [prompt]
+
+Work with an agent in the trusted current workspace. With no prompt, Salad
+keeps one session open so you can inspect, edit, test, and follow up without
+starting over. Press Ctrl-D to finish the session; Ctrl-C cancels the active
+run and cleans up its child processes.
+
+The normal Salad chat is a separate product path and is not used by this
+command. Network access is denied by default. To request it for this run:
+
+  salad engineer --network allow
 `)
 	case "doctor":
 		fmt.Println("Usage: salad doctor")
