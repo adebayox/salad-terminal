@@ -643,3 +643,29 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   carrier/runtime, domain-scoped network allowlisting, package provenance and
   rollback hardening, and fuller replay/reconnect semantics. `v0.2.17` is an
   engineer preview for macOS/Linux, not universal Windows engineer support.
+
+### Empty-workspace reality check (2026-08-15 continuation)
+
+- [x] Used the public `v0.2.17` CLI in a new empty trusted Git workspace. It
+  created a dependency-free task-board app, produced a `dist/` build artifact,
+  ran tests, and served the page on a persistent terminal. Independent curl
+  and lsof checks confirmed `/health`, the page marker, and process cleanup.
+- [x] Found and corrected real generated-project defects instead of accepting
+  the model's summary: the first `start` script only echoed text; the first
+  test cleanup used the wrong server object; the first accessibility repair
+  duplicated HTML blocks; and the first test only checked substring presence.
+  Exact independent counts and the final build/test then passed.
+- [x] Found a second real safety defect in the generated app: the default
+  server bound wildcard IPv6 and encoded traversal returned HTTP 500. The
+  engineer session entered a repeated repair loop and corrupted the disposable
+  `server.js`/`test.js` files with NUL bytes and duplicated blocks before it was
+  cancelled. This is a harness/model-workflow failure, not a release pass.
+- [x] Added a bounded ACP prompt timeout (default 10 minutes, override with
+  `SALAD_ENGINEER_PROMPT_TIMEOUT`) and a regression test proving a stalled
+  carrier turn is cancelled and reaped. Added explicit persona guidance to
+  report reviewer/tool failure and stop repeated repair attempts.
+- [ ] Do not claim the collaboration lane is signed off yet. The requested
+  public and rebuilt-candidate reviewer prompts hit provider HTTP 502s, and
+  the model previously claimed reviewer approval without a returned finding.
+  Re-test the bounded reviewer lane when the provider route is healthy, then
+  publish the fix only after an actual returned read-only review is observed.

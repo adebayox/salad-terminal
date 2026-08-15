@@ -116,3 +116,28 @@ The public resume command created a new run and restored the prior conversation
 context, including the test/reviewer/server-cleanup summary. It does not
 restore a live OS process or PTY after the carrier exits; that boundary is
 intentional and remains documented.
+
+## Empty-workspace reality check
+
+The public release was also exercised from a new empty trusted Git workspace,
+not only an existing project. It created a dependency-free task-board app,
+produced a `dist/` build artifact, started the app with `env PORT=4330 npm run
+start`, and served it from a persistent terminal. Independent checks saw the
+real `/health` JSON, exactly one task-board heading and task container, and no
+listener after terminal cleanup.
+
+That run exposed why a model summary is not a release gate. The first generated
+`start` script only echoed text; a later repair left duplicate HTML and tests
+that asserted only substring presence. After explicit follow-up, exact counts,
+build, tests, curl, and cleanup passed. A subsequent security repair entered a
+repeated loop and corrupted the disposable `server.js` and `test.js` with NUL
+bytes and duplicated blocks. The run was cancelled; no Salad Terminal source
+or normal Salad Chat file was affected.
+
+The collaboration check is not signed off. The public and rebuilt-candidate
+review prompts both hit provider HTTP 502 responses, and an earlier model
+response claimed a reviewer approval without a returned finding. A bounded ACP
+prompt timeout and stronger honesty/repair instructions are now in the
+engineer branch, with a unit test proving a stalled carrier turn is reaped.
+The carrier must still be rebuilt, installed, and tested against a healthy
+provider before that change can be called released.
