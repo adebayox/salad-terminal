@@ -40,7 +40,10 @@ changed.
   and added write restrictions, rather than a default-deny network/read policy.
 - Current macOS evidence: the rebuilt carrier denies the same real `read` call,
   denies a real shell network probe, and still permits a normal workspace
-  write. The provider bridge continues to work because it remains in the
+  write. The source patch now puts the Seatbelt credential rule around the
+  whole filesystem, including home-directory paths; a direct model-controlled
+  home-sentinel smoke is still required before calling that broader rule
+  proven. The provider bridge continues to work because it remains in the
   parent-owned path rather than the confined shell.
 - Impact: a malicious project instruction or dependency output could persuade
   the model to read a secret and send it to a remote endpoint. The Salad

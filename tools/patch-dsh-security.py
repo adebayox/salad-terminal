@@ -41,8 +41,11 @@ replace_once(
     "  const forms = ['(version 1)', '(allow default)', '(deny file-write*)', `(allow file-write* (literal ${sbplString('/dev/null')}))`]",
     """  const forms = ['(version 1)', '(allow default)', '(deny file-write*)']
   if (process.env.DSH_NETWORK_MODE !== 'allow') forms.push('(deny network*)')
-  const rootPattern = policy.workspaceRoot.replaceAll('\\\\', '\\\\\\\\').replaceAll('.', '\\\\.')
-  const secretPattern = String.raw`^${rootPattern}/(?:[^/]+/)*(?:[.]env(?:[.][^/]*)?|[.]npmrc|[.]pypirc|[.]netrc|credentials(?:[.][^/]*)?|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+[.](?:pem|key|p12|pfx))(?:/|$)`
+  // The shell can address absolute paths, so protect credential-shaped
+  // locations globally rather than only below the trusted workspace.
+  // Keep this as simple alternatives: Seatbelt's regex parser treats some
+  // nested optional groups differently from the regex engines used in JS.
+  const secretPattern = String.raw`/[.]env|/[.]ssh|/[.]aws|/[.]azure|/[.]npmrc|/[.]pypirc|/[.]netrc|/credentials|/id_(rsa|dsa|ecdsa|ed25519)|/[^/]+[.](pem|key|p12|pfx)`
   forms.push(`(deny file-read* (regex #"${secretPattern}") (with no-log))`)
   forms.push(`(allow file-write* (literal ${sbplString('/dev/null')}))`)""",
     "macOS Seatbelt network and sensitive-file policy",
@@ -61,7 +64,7 @@ replace_once(
       },
     })""",
     """    const persistence = this.ctx.get('sessionPersistence')
-    if (persistence !== undefined && (await persistence.list()).some(header => header.id === sessionId)) {
+    if (persistence !== undefined && (await persistence.list()).some((header: { id: string }) => header.id === sessionId)) {
       const handle = await this.ctx.agents.resume({
         resumeSessionId: SessionId(sessionId),
         agentOptions: {

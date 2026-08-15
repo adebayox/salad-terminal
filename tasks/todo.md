@@ -286,7 +286,9 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - Completed in this slice: added a shape-checked DSH source patch, default
   `DSH_NETWORK_MODE=deny` for both ACP and JSON-RPC child launches, a protected
   credential-file family, and real macOS carrier smoke tests for secret read,
-  shell network, provider bridge, and ordinary workspace write.
+  shell network, provider bridge, and ordinary workspace write. The Seatbelt
+  rule is now global rather than limited to the workspace; the rebuilt carrier
+  includes it.
 - Still open: Linux carrier proof, Windows capability decision, and a visible
   allowlisted network approval flow instead of the preview escape hatch.
 - Follow-on completed: JSON-RPC run records now retain the DSH session ID and
@@ -317,6 +319,12 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   it locally with its checksum manifest, and run the real installer into an
   isolated prefix. The installed binary reported its candidate version and
   `salad harness doctor` verified the managed carrier checksum and config.
+- [ ] Run a model-controlled home-directory credential read against the
+  globally patched macOS carrier; project-local secret denial is verified, but
+  this absolute-path negative is not yet signed off.
+- [x] Validate the exact global Seatbelt expression independently against a
+  home-directory `.env` sentinel; the OS denied the read. This is static
+  policy evidence, not a substitute for the model-controlled carrier smoke.
 - [x] Build and run the packaged JSON-RPC carrier twice to prove durable
   session restore. ACP remains the verified interactive path; JSON-RPC remains
   a compatibility path because it has no per-prompt cancellation and is not a
