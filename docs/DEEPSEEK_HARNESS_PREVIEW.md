@@ -99,8 +99,13 @@ The ACP preview starts a fresh DSH session for each invocation. DeepSeek's ACP
 bridge does not yet expose resume/list/load, so ACP `salad harness resume` is a
 Salad continuation rather than a DSH session restore. The explicit JSON-RPC
 mode is wired to reuse DSH's persisted session and stores its session files in
-Salad's private config directory, not in the repository. A two-invocation
-packaged-carrier smoke is still required before this is release evidence:
+Salad's private config directory, not in the repository. That restore path has
+now been verified across two separate invocations with a packaged carrier
+built from the pinned DSH source. The carrier build applies a small,
+shape-checked Salad patch so the JSON-RPC server calls DSH's real resume API
+when the session already exists. The second process saw a marker written by
+the first process. This is compatibility evidence, not a claim that the
+default ACP path restores sessions:
 
 ```text
 salad harness --protocol jsonrpc --command /path/to/dsh-jsonrpc-agent \
@@ -108,8 +113,11 @@ salad harness --protocol jsonrpc --command /path/to/dsh-jsonrpc-agent \
 salad harness resume <run-id> "Now fix it and rerun the test"
 ```
 
-The JSON-RPC runtime still has no per-prompt cancel method, so this remains a
-compatibility path rather than the default interactive approval path.
+The JSON-RPC runtime still has no per-prompt cancel method and is not shipped
+as Salad's default carrier, so it remains a compatibility path rather than the
+default interactive approval path. The disposable smoke used the upstream
+JSON-RPC example composition; that composition is not itself the release
+security profile.
 
 ## Runtime packaging
 
@@ -137,6 +145,8 @@ Salad Terminal
 
 The current ACP contract is intentionally limited: fresh sessions only, with
 no server-side resume/list/load. `salad harness resume` is transparent local
-continuation, not a claim that ACP restored DSH history. The integration
-remains opt-in: normal Salad chat never launches this process and no DSH
-session becomes the Salad chat source of truth.
+continuation, not a claim that ACP restored DSH history. JSON-RPC can restore a
+persisted DSH session when a developer supplies a compatible carrier, but that
+mode is not the default interactive path. The integration remains opt-in:
+normal Salad chat never launches this process and no DSH session becomes the
+Salad chat source of truth.

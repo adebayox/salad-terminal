@@ -293,9 +293,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   use a private, stable per-workspace session directory, so JSON-RPC resume
   reuses persisted DSH history instead of copying the old prompt. ACP remains
   fresh-session by protocol design.
-- Verification still required: run two separate invocations through a
-  packaged JSON-RPC carrier and prove the second sees the first session's
-  durable history; the carrier executed in this slice was ACP.
+- Verification completed: two separate invocations through a packaged
+  JSON-RPC carrier built from the pinned DSH source restored the same session;
+  the second provider request saw the first marker and the durable JSONL log
+  contains both turns. The JSON-RPC example composition used for this smoke is
+  not the release security profile, so JSON-RPC remains compatibility-only.
 
 ### Engineer-terminal runtime verification follow-up (2026-08-15)
 
@@ -311,8 +313,9 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   launches the carrier in its own process group and kills that group on the
   bounded cancellation fallback. The rerun exited as cancelled with no child
   process remaining.
-- [ ] Build and run the packaged JSON-RPC carrier twice to prove durable
+- [x] Build and run the packaged JSON-RPC carrier twice to prove durable
   session restore. ACP remains the verified interactive path; JSON-RPC remains
-  a compatibility path until this evidence exists.
+  a compatibility path because it has no per-prompt cancellation and is not a
+  distributed default carrier.
 - [ ] Prove Linux and Windows carrier safety on native runners, and replace the
   preview's broad network escape hatch with visible allowlisted approval.

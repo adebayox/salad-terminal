@@ -53,15 +53,20 @@ changed.
 - Release decision: the original macOS P1 is fixed in the rebuilt carrier;
   the cross-platform release gate remains open.
 
-### [P1] “Resume” is not true session restore
+### [P1] The default interactive path does not restore true session history
 
 - Location: Salad's ACP adapter starts `initialize`, `session/new`, and one
   `session/prompt` for every invocation. The explicit JSON-RPC path now stores
   a DSH session identity and private session root, but the default interactive
   ACP path still starts fresh.
-- Impact: an engineer can resume the files but lose the actual agent history,
-  approvals, tool evidence, and goals. This breaks long-running work and makes
-  recovery after closing a terminal unreliable.
+- Evidence: the explicit JSON-RPC compatibility path now restores a real DSH
+  session across two separate processes with a packaged pinned-source carrier;
+  the durable log contains both turns and the second provider request sees the
+  first marker. ACP remains fresh-session by protocol design.
+- Impact: an engineer using the normal interactive path can resume the files
+  but lose the actual agent history, approvals, tool evidence, and goals. This
+  breaks long-running work and makes recovery after closing a terminal
+  unreliable.
 - Required follow-up: move the interactive path to a protocol with durable
   session restore, or add a verified Salad-owned replay adapter over ACP.
 

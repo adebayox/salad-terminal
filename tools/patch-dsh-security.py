@@ -48,6 +48,42 @@ replace_once(
     "macOS Seatbelt network and sensitive-file policy",
 )
 
+jsonrpc_server = root / "packages/sdk/server/src/server.ts"
+replace_once(
+    jsonrpc_server,
+    """    const handle = await this.ctx.agents.create({
+      sessionId: SessionId(sessionId),
+      meta: { cwd: this.cwd },
+      agentOptions: {
+        provider: this.provider,
+        model: this.model,
+        ...this.maxTokens === undefined ? {} : { maxTokens: this.maxTokens },
+      },
+    })""",
+    """    const persistence = this.ctx.get('sessionPersistence')
+    if (persistence !== undefined && (await persistence.list()).some(header => header.id === sessionId)) {
+      const handle = await this.ctx.agents.resume({
+        resumeSessionId: SessionId(sessionId),
+        agentOptions: {
+          provider: this.provider,
+          model: this.model,
+          ...this.maxTokens === undefined ? {} : { maxTokens: this.maxTokens },
+        },
+      })
+      return { handle }
+    }
+    const handle = await this.ctx.agents.create({
+      sessionId: SessionId(sessionId),
+      meta: { cwd: this.cwd },
+      agentOptions: {
+        provider: this.provider,
+        model: this.model,
+        ...this.maxTokens === undefined ? {} : { maxTokens: this.maxTokens },
+      },
+    })""",
+    "JSON-RPC persisted-session resume",
+)
+
 fs_sandbox = root / "packages/fs/fs-sandbox/src/index.ts"
 replace_once(
     fs_sandbox,
