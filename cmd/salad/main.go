@@ -502,13 +502,21 @@ func runHarnessMode(args []string, interactive bool) error {
 	if protocol == "jsonrpc" && sessionID == "" {
 		sessionID = "salad-" + runID
 	}
-	if protocol == "jsonrpc" {
+	if protocol == "jsonrpc" || protocol == "acp" {
 		sessionRoot, sessionErr := harness.EnsureSessionRoot(root)
 		if sessionErr != nil {
 			return sessionErr
 		}
 		if !environmentValue(opts.Env, "DSH_SESSION_ROOT") && strings.TrimSpace(os.Getenv("DSH_SESSION_ROOT")) == "" {
 			opts.Env = append(opts.Env, "DSH_SESSION_ROOT="+sessionRoot)
+		}
+		// The pinned ACP composition names its durable root
+		// DSH_SNAPSHOT_SESSIONS_ROOT. Keep both names explicit so the managed
+		// carrier and the JSON-RPC compatibility carrier share the same private,
+		// per-workspace persistence boundary without inheriting a parent-shell
+		// path.
+		if !environmentValue(opts.Env, "DSH_SNAPSHOT_SESSIONS_ROOT") && strings.TrimSpace(os.Getenv("DSH_SNAPSHOT_SESSIONS_ROOT")) == "" {
+			opts.Env = append(opts.Env, "DSH_SNAPSHOT_SESSIONS_ROOT="+sessionRoot)
 		}
 	}
 	opts.SessionID = sessionID

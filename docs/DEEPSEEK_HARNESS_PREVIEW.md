@@ -168,12 +168,14 @@ Salad Terminal
        └─ session cancellation, then bounded kill fallback
 ```
 
-The current pinned ACP carrier contract is intentionally limited: it exposes
-fresh sessions only, with no server-side resume/list/load. `salad harness
-resume` is transparent local continuation for that carrier, not a claim that
-ACP restored DSH history. The adapter is ready to use stable ACP restore when
-the pinned runtime exposes it. JSON-RPC can restore a persisted DSH session
-when a developer supplies a compatible carrier, but that mode is not the
-default interactive path. The integration remains opt-in:
+The published pinned ACP carrier currently exposes fresh sessions only, with
+no server-side resume/list/load. `salad harness resume` is transparent local
+continuation for that carrier, not a claim that ACP restored DSH history. The
+carrier build now contains a shape-checked source patch prepared to expose
+DSH's existing durable `ctx.agents.resume()` capability through stable ACP,
+but that patched carrier is not released or signed off until it passes a
+two-process smoke. JSON-RPC can restore a persisted DSH session when a
+developer supplies a compatible carrier, but that mode is not the default
+interactive path. The integration remains opt-in:
 normal Salad chat never launches this process and no DSH session becomes the
 Salad chat source of truth.

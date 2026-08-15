@@ -359,3 +359,9 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [ ] Make the interactive engineer session resume across processes with a
   real packaged carrier capability, then add reconnect/replay and long-lived
   process controls before calling the engineer mode production-ready.
+- [ ] Rebuild and smoke the carrier after the source-side ACP patch: the
+  pinned DSH ACP plugin already has durable persistence and `ctx.agents.resume`,
+  so `tools/patch-dsh-security.py` now prepares capability-aware
+  `session/resume` and `session/close` handlers plus a private ACP persistence
+  root. This is not shipped or signed off until a compiled carrier survives
+  two separate processes and rejects a mismatched workspace cwd.
