@@ -339,6 +339,13 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   Verified both a failed carrier archive (binary unchanged) and a failed
   managed install after the binary swap (previous binary restored) with local
   release fixtures.
+- [x] Close the carrier-side half of that transaction: managed install failure
+  now restores or removes runtime/config/manifest files instead of leaving
+  partial Salad-owned state, forced upgrades refresh all backup components,
+  and `salad harness rollback` removes newly added config when the prior
+  install had none. Unit tests cover partial first-install cleanup and stale
+  config rollback. The Unix installer also rolls back the binary on INT/TERM
+  during the update window.
 - [x] Replace the invisible `DSH_NETWORK_MODE=allow` parent-shell escape hatch
   with `salad harness --network allow` plus a visible confirmation prompt;
   parent-shell allow is rejected and the default remains deny.

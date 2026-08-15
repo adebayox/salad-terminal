@@ -46,6 +46,7 @@ SALAD_INSTALLED_BIN_DIR=""
 SALAD_BINARY_DEST=""
 SALAD_BINARY_BACKUP=""
 SALAD_BINARY_HAD_PREVIOUS="0"
+SALAD_BINARY_TRANSACTION_ACTIVE="0"
 
 cleanup_install_tmp_dir() {
   if [[ -n "$SALAD_INSTALL_TMP_DIR" ]]; then
@@ -123,7 +124,15 @@ rollback_binary_transaction() {
   else
     rm -f -- "$SALAD_BINARY_DEST"
   fi
-  echo "Restored the previous Salad Terminal because the harness install failed." >&2
+  echo "Restored the previous Salad Terminal after an incomplete update." >&2
+}
+
+handle_binary_transaction_signal() {
+  if [[ "$SALAD_BINARY_TRANSACTION_ACTIVE" == "1" ]]; then
+    rollback_binary_transaction
+    SALAD_BINARY_TRANSACTION_ACTIVE="0"
+  fi
+  exit 130
 }
 
 verify_release_checksum() {
@@ -311,11 +320,17 @@ download_release_binary() {
     fi
   fi
   begin_binary_transaction "$bin_dir" "$tmp"
+  trap handle_binary_transaction_signal INT TERM
+  SALAD_BINARY_TRANSACTION_ACTIVE="1"
   install_binary "${tmp}/salad"
   if ! install_harness_release "$base_url" "$target" "$tmp"; then
     rollback_binary_transaction
+    SALAD_BINARY_TRANSACTION_ACTIVE="0"
+    trap - INT TERM
     exit 1
   fi
+  SALAD_BINARY_TRANSACTION_ACTIVE="0"
+  trap - INT TERM
   echo "Version: ${ver}"
 }
 
