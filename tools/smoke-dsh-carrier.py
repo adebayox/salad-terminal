@@ -69,6 +69,9 @@ def main() -> int:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--workspace", required=True, type=Path)
     args = parser.parse_args()
+    args.carrier = args.carrier.resolve()
+    args.config = args.config.resolve()
+    args.workspace = args.workspace.resolve()
     args.workspace.mkdir(parents=True, exist_ok=True)
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockDeepSeek)
