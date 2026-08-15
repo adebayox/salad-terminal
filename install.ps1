@@ -35,7 +35,27 @@ try {
 
   $binDir = if ($env:SALAD_BIN_DIR) { $env:SALAD_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'Salad\bin' }
   New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-  Copy-Item -Force $binary (Join-Path $binDir 'salad.exe')
+  $destination = Join-Path $binDir 'salad.exe'
+  $staged = Join-Path $binDir ('.salad.exe.' + [guid]::NewGuid().ToString('N') + '.new')
+  $backup = Join-Path $binDir 'salad.exe.previous'
+  try {
+    # Stage beside the installed binary, then replace it atomically. A failed
+    # update leaves the existing CLI usable and preserves the previous binary
+    # for an operator rollback instead of leaving a half-written executable.
+    Copy-Item -Force $binary $staged
+    if (Test-Path $destination) {
+      [System.IO.File]::Replace($staged, $destination, $backup, $true)
+    } else {
+      Move-Item -Force $staged $destination
+    }
+  } catch {
+    if ((Test-Path $backup) -and -not (Test-Path $destination)) {
+      Copy-Item -Force $backup $destination
+    }
+    throw
+  } finally {
+    Remove-Item -Force $staged -ErrorAction SilentlyContinue
+  }
   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
   if (-not $userPath) { $userPath = '' }
   if (($userPath -split ';') -notcontains $binDir) {

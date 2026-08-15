@@ -482,7 +482,26 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   can make two carriers write one session log and corrupt it. Resume now
   refuses `starting`/`running` records and documents that live PTYs/dev servers
   belong to the current carrier process.
-- [ ] Publish v0.2.15 with the resume guard, then rerun the exact-release
-  resume/cancellation matrix from a clean workspace. Native Linux/Windows
-  runtime proof, network allowlisting, reconnect/replay, and browser receipt
-  verification remain open; normal Salad Chat remains untouched.
+- [x] Published v0.2.15 with the resume guard and reran the exact-release
+  resume/cancellation matrix from a clean workspace. The exact release passed
+  safe resume after process exit and refused active-run resume. Native
+  Linux/Windows runtime proof, domain-level network allowlisting,
+  reconnect/replay, and browser receipt verification remain open; normal Salad
+  Chat remains untouched.
+
+### Post-release challenge adjudication (2026-08-15)
+
+- [x] Ran independent read-only security/package and engineer-flow reviews
+  after the DeepSeek reviewer bridge timed out. The reviews confirmed that
+  v0.2.15 is a usable macOS-focused preview, not a generally shippable
+  cross-platform engineer product.
+- [x] Converted the review findings into durable work items for native
+  Linux/Windows sandbox proof, domain-level network allowlisting, package
+  provenance and Windows rollback, and release-level collaboration/
+  cancellation/replay evidence.
+- [x] Added staged atomic replacement and previous-binary preservation to the
+  Windows installer. This is source-complete but not released or native-tested
+  yet.
+- [ ] Do not call the engineer terminal production-ready until the four
+  durable work items above have evidence. Normal Salad Chat remains outside
+  the harness path and has no changed files.
