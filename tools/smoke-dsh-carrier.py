@@ -84,16 +84,19 @@ def main() -> int:
             "DSH_NETWORK_MODE": "deny",
         }
     )
-    process = subprocess.Popen(
-        [str(args.carrier), "--config", str(args.config)],
-        cwd=args.workspace,
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
+    def launch() -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            [str(args.carrier), "--config", str(args.config)],
+            cwd=args.workspace,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+    process = launch()
     session_id = ""
     try:
         send(process, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1, "clientCapabilities": {}}})
@@ -122,7 +125,48 @@ def main() -> int:
             raise RuntimeError(f"ACP prompt failed: {prompted}; output={output}")
         if len(MockDeepSeek.requests) != 1:
             raise RuntimeError(f"expected one mock provider request, got {len(MockDeepSeek.requests)}")
-        print(json.dumps({"initialize": "ok", "session_new": "ok", "prompt": "ok", "provider_requests": 1}))
+
+        send(process, {"jsonrpc": "2.0", "id": 4, "method": "session/close", "params": {"sessionId": session_id}})
+        _, closed = read_response(process, 4)
+        if "result" not in closed:
+            raise RuntimeError(f"ACP session/close failed: {closed}")
+        assert process.stdin is not None
+        process.stdin.close()
+        process.wait(timeout=10)
+
+        process = launch()
+        send(process, {"jsonrpc": "2.0", "id": 5, "method": "initialize", "params": {"protocolVersion": 1, "clientCapabilities": {}}})
+        _, resumed_initialized = read_response(process, 5)
+        if "result" not in resumed_initialized:
+            raise RuntimeError(f"ACP resume initialize failed: {resumed_initialized}")
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "session/resume",
+                "params": {"sessionId": session_id, "cwd": str(args.workspace), "mcpServers": []},
+            },
+        )
+        _, resumed = read_response(process, 6)
+        if "result" not in resumed:
+            raise RuntimeError(f"ACP session/resume failed: {resumed}")
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "session/prompt",
+                "params": {"sessionId": session_id, "prompt": [{"type": "text", "text": "Reply with the resume marker only."}]},
+            },
+        )
+        resumed_lines, resumed_prompt = read_response(process, 7)
+        resumed_output = "\n".join(resumed_lines)
+        if "result" not in resumed_prompt or "LINUX_CARRIER_OK" not in resumed_output:
+            raise RuntimeError(f"ACP resumed prompt failed: {resumed_prompt}; output={resumed_output}")
+        if len(MockDeepSeek.requests) != 2:
+            raise RuntimeError(f"expected two mock provider requests after resume, got {len(MockDeepSeek.requests)}")
+        print(json.dumps({"initialize": "ok", "session_new": "ok", "prompt": "ok", "resume": "ok", "provider_requests": 2}))
         return 0
     finally:
         try:
