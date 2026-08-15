@@ -111,9 +111,10 @@ single prompt can create a project.
 The rebuilt macOS carrier now denies model-controlled reads and writes of
 credential-shaped files such as `.env*`, `.ssh`, `.aws`, private-key files,
 and package credential files. Its confined shell commands also start with no
-network. `DSH_NETWORK_MODE=allow` is an explicit developer escape hatch for
-network-dependent work; it is not the production default and must eventually
-be replaced by a visible, allowlisted approval in the terminal.
+network. Network access is requested with `--network allow` and confirmed in
+the terminal for that run; a parent-shell `DSH_NETWORK_MODE=allow` is rejected.
+This is visible per-run approval, not yet a domain allowlist, so the final
+engineer release still needs an allowlisted network policy.
 
 The current v0.2.11 package is also materially heavier when the DSH carrier is
 installed: the normal terminal binary is about 15 MB uncompressed, while the

@@ -84,6 +84,18 @@ func TestScrubbedEnvironment(t *testing.T) {
 	}
 }
 
+func TestScrubbedEnvironmentDoesNotInheritNetworkAllow(t *testing.T) {
+	t.Setenv("DSH_NETWORK_MODE", "allow")
+	env := scrubbedEnvironment(withHarnessSafetyDefaults(nil, "/tmp/workspace"))
+	if !containsEnvironment(env, "DSH_NETWORK_MODE=deny") || containsEnvironment(env, "DSH_NETWORK_MODE=allow") {
+		t.Fatalf("network capability inherited from parent: %v", env)
+	}
+	env = scrubbedEnvironment(withHarnessSafetyDefaults([]string{"DSH_NETWORK_MODE=allow"}, "/tmp/workspace"))
+	if !containsEnvironment(env, "DSH_NETWORK_MODE=allow") || containsEnvironment(env, "DSH_NETWORK_MODE=deny") {
+		t.Fatalf("explicit network capability was not preserved: %v", env)
+	}
+}
+
 func TestHarnessSafetyDefaultsDenyNetworkUnlessExplicitlyOverridden(t *testing.T) {
 	defaulted := withHarnessSafetyDefaults(nil, "/tmp/workspace")
 	if !containsEnvironment(defaulted, "DSH_NETWORK_MODE=deny") || !containsEnvironment(defaulted, "DSH_CWD=/tmp/workspace") {

@@ -53,9 +53,16 @@ hatch `DEEPSEEK_API_KEY=...`; Salad never stores or forwards that key.
 The managed carrier protects common credential-shaped files from the model,
 including `.env*`, `.ssh`, `.aws`, private keys, and package credential files.
 Confined shell commands start with network disabled. For a trusted operation
-that genuinely needs network access, a developer may explicitly set
-`DSH_NETWORK_MODE=allow`; this is an escape hatch for the preview, not the
-final approval experience.
+that genuinely needs network access, request it per run:
+
+```text
+salad harness --network allow "Install the dependencies and run the test suite"
+```
+
+Salad prints a warning and asks for confirmation before starting that run.
+Setting `DSH_NETWORK_MODE=allow` in the parent shell is rejected; network is
+not an invisible environment switch. This is a visible per-run approval, not
+yet a domain allowlist, so network-dependent work remains a preview feature.
 
 Before starting, check the local setup without touching the project:
 

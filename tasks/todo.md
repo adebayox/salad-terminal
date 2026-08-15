@@ -335,5 +335,8 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   Verified both a failed carrier archive (binary unchanged) and a failed
   managed install after the binary swap (previous binary restored) with local
   release fixtures.
+- [x] Replace the invisible `DSH_NETWORK_MODE=allow` parent-shell escape hatch
+  with `salad harness --network allow` plus a visible confirmation prompt;
+  parent-shell allow is rejected and the default remains deny.
 - [ ] Prove Linux and Windows carrier safety on native runners, and replace the
-  preview's broad network escape hatch with visible allowlisted approval.
+  visible per-run network approval with a domain allowlist.
