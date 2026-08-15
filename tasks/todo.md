@@ -425,3 +425,39 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   clean install: the host disk was full from task-owned 198 MB carrier test
   copies. After removing those temporary artifacts, the same public installer
   and carrier passed signing and doctor verification.
+
+### Final engineer-terminal audit (2026-08-15)
+
+- [x] Re-ran a real long-lived-process workflow with the public `v0.2.12`
+  install: started a Python server, verified it over HTTP from outside the
+  agent, followed up in the same session, resumed it in a second process, and
+  confirmed Ctrl-D cleaned up the child process group.
+- [x] Re-ran a model-controlled absolute read of `/Users/davidnifemi/.env`
+  with the public carrier; the carrier denied it. The test also exposed that
+  non-conventional names such as `.salad-home-read-sentinel.env` are not
+  covered by the current filename policy and must not be described as
+  protected merely because they end in `.env`.
+- [x] Add durable run status and immediate session-ID persistence so a crash
+  does not leave a run looking resumable without the actual ACP session.
+- [x] Make `salad engineer resume <run-id>` and saved-run inspection visible in
+  help and the normal engineer workflow.
+- [x] Integrate DeepSeek's official persistent PTY and background-job plugins
+  into the pinned carrier build. The first rebuilt carrier exposed an
+  abstract-job-registry composition error; commit `a09460b` now loads the
+  concrete `@deepseek-ai/dsh-jobs-local` implementation. CI run `31890011530`
+  rebuilt all four carrier targets, and a corrected macOS candidate booted and
+  passed a live Salad-backed PTY/job smoke.
+- [x] Ran a real collaboration prompt against the public carrier. The model
+  could delegate a subagent, but the v0.2.12 config gave the engineer no
+  observable job-list/output/kill control; the follow-up could not collect the
+  child result before cancellation. This is evidence for the PTY/job carrier
+  change, not a pass for the old package.
+- [x] Decide and document the process-control and replay boundary: model
+  session history resumes, while live OS processes and terminal output do not
+  survive carrier shutdown; child process groups are cleaned up.
+- [ ] Merge PR #10 and publish a new carrier release. The public `v0.2.12`
+  package remains the older one-shot carrier.
+- [ ] Re-run the remaining release matrix on native Linux/Windows, including
+  sandbox enforcement, reconnect/replay, cancellation, and package install.
+  Normal Salad Chat remains outside this work and must stay a no-change
+  regression check.

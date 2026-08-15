@@ -272,4 +272,65 @@ replace_once(
     "Windows network-policy fail closed",
 )
 
+# The stock ACP example exposes one-shot bash only. Salad's engineer path also
+# needs the official DSH persistent PTY and background-job capabilities so a
+# developer can start a dev server, inspect it, and stop it without inventing
+# a second process manager in the Salad CLI.
+acp_config = root / "examples/acp-agent/cordis.yml"
+replace_once(
+    acp_config,
+    """- id: bash
+  name: '@deepseek-ai/dsh-bash-sandbox'
+  config:
+    timeoutMs: 60000
+
+- id: approval""",
+    """- id: bash
+  name: '@deepseek-ai/dsh-bash-sandbox'
+  config:
+    timeoutMs: 60000
+
+# Persistent terminal sessions own interactive processes and their cleanup.
+- id: pty
+  name: '@deepseek-ai/dsh-terminal'
+
+- id: terminal-bash
+  name: '@deepseek-ai/dsh-terminal-bash'
+  config:
+    pollIntervalMs: 10
+    exactProbeAfterMs: 20
+    idleSilenceMs: 250
+    handoffGraceMs: 250
+    timeoutMs: 2000
+    disposeGraceMs: 500
+
+# Background jobs make long-running commands observable and cancellable. The
+# local package supplies the abstract @deepseek-ai/dsh-jobs registry.
+- id: jobs-local
+  name: '@deepseek-ai/dsh-jobs-local'
+
+- id: approval""",
+    "persistent terminal and job backends",
+)
+replace_once(
+    acp_config,
+    """- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+# `configPath` is read once""",
+    """- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+  config:
+    completionDelivery: quiet
+
+- id: tool-terminal
+  name: '@deepseek-ai/dsh-tool-terminal'
+
+# `configPath` is read once""",
+    "persistent terminal and job tools",
+)
+
 print("Applied Salad Terminal security policy to pinned DeepSeek Harness source")

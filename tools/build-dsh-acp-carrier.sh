@@ -58,8 +58,14 @@ const dependencies = packageJSON.dependencies ?? (packageJSON.dependencies = {})
 for (const name of [
   '@deepseek-ai/dsh-acp-demo',
   '@deepseek-ai/dsh-bash-sandbox',
+  '@deepseek-ai/dsh-jobs',
+  '@deepseek-ai/dsh-jobs-local',
+  '@deepseek-ai/dsh-terminal',
+  '@deepseek-ai/dsh-terminal-bash',
+  '@deepseek-ai/dsh-tool-jobs',
   '@deepseek-ai/dsh-tool-subagent-report',
   '@deepseek-ai/dsh-tool-ralph',
+  '@deepseek-ai/dsh-tool-terminal',
 ]) {
   dependencies[name] ??= 'workspace:^'
 }

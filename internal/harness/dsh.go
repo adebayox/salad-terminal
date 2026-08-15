@@ -33,6 +33,10 @@ type Options struct {
 	Input                                    io.Reader
 	InputCloser                              io.Closer
 	Output                                   io.Writer
+	// OnSessionID is called as soon as the runtime has identified the session.
+	// The CLI uses it to make resume state durable before a long model turn or
+	// an unexpected process exit can lose the in-memory result.
+	OnSessionID func(string)
 }
 
 type Result struct{ SessionID string }
@@ -134,6 +138,9 @@ func Run(ctx context.Context, opts Options, prompt string) (Result, error) {
 	}
 	if err := cmd.Start(); err != nil {
 		return Result{}, fmt.Errorf("start DeepSeek Harness (%s): %w", opts.Command, err)
+	}
+	if opts.OnSessionID != nil {
+		opts.OnSessionID(opts.SessionID)
 	}
 
 	finished := make(chan struct{})
