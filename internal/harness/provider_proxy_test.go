@@ -108,6 +108,49 @@ func TestProviderProxyRefreshesExpiredSaladSession(t *testing.T) {
 	}
 }
 
+func TestProviderProxyRetriesTransientGatewayFailure(t *testing.T) {
+	var requests int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"recovered"}}]}`)
+	}))
+	defer upstream.Close()
+
+	client := api.New(upstream.URL, "salad-token")
+	proxy, err := StartProviderProxy(context.Background(), client, "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = proxy.Close(ctx)
+	}()
+
+	apiKey := strings.TrimPrefix(strings.Split(proxy.Environment()[0], "=")[1], "")
+	req, err := http.NewRequest(http.MethodPost, proxy.BaseURL()+"/v1/chat/completions", strings.NewReader(`{"stream":false,"messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("proxy retry status = %d, want 200", response.StatusCode)
+	}
+	if requests != 2 {
+		t.Fatalf("upstream requests = %d, want 2", requests)
+	}
+}
+
 func TestProviderProxyReusesSaladClientTransport(t *testing.T) {
 	called := false
 	client := api.New("https://provider.invalid", "salad-token")
