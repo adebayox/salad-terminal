@@ -313,6 +313,10 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   launches the carrier in its own process group and kills that group on the
   bounded cancellation fallback. The rerun exited as cancelled with no child
   process remaining.
+- [x] Build a release-shaped macOS candidate with the rebuilt carrier, serve
+  it locally with its checksum manifest, and run the real installer into an
+  isolated prefix. The installed binary reported its candidate version and
+  `salad harness doctor` verified the managed carrier checksum and config.
 - [x] Build and run the packaged JSON-RPC carrier twice to prove durable
   session restore. ACP remains the verified interactive path; JSON-RPC remains
   a compatibility path because it has no per-prompt cancellation and is not a
