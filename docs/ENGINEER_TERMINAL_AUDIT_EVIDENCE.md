@@ -86,11 +86,33 @@ confirmed on port 4322, Salad Terminal received Ctrl-C, the run became
 
 ## Still open before a stronger release claim
 
-- Publish the corrected carrier as a new version only after PR #10 is merged
-  and the release artifacts are rebuilt from the corrected commit. The public
-  `v0.2.12` package still contains the earlier one-shot carrier.
+- The corrected carrier is now published in `v0.2.17`. The release is still
+  an engineer preview for macOS/Linux; it is not a claim of Windows engineer
+  runtime support.
 - Prove the same sandbox boundary on native Linux and Windows, and replace
   unrestricted per-run network enablement with an allowlist.
 - Decide whether Salad needs full terminal-output replay. Current behavior is
   explicit: model/session history resumes, while live OS processes and their
   terminal output do not survive carrier shutdown.
+
+## Exact public v0.2.17 recheck
+
+The public installer was forced out of the source checkout and installed the
+immutable `v0.2.17` assets. `salad version` reported `0.2.17`; `salad harness
+doctor` reported the managed carrier hash
+`71aaeac3eafa88696768fa40a489fafb8052e3a5bbb03f4284f3eb7963c9a941`; and no
+old test-server ports were listening.
+
+Against the disposable Node project, the published release read `AGENTS.md`,
+made the smallest justified test change, and the project's own `npm test`
+passed (`1` test, `0` failures). The run started the app with the explicit
+`env PORT=4325 npm run start` command, returned the real `/health` JSON from an
+external curl, surfaced a read-only reviewer result, and left port 4325
+closed. A separate run started `python3 -m http.server 4326 --bind
+127.0.0.1`; external `lsof` and curl saw it, Ctrl-C cancelled the Salad run,
+the saved run status became `cancelled`, and port 4326 was closed afterward.
+
+The public resume command created a new run and restored the prior conversation
+context, including the test/reviewer/server-cleanup summary. It does not
+restore a live OS process or PTY after the carrier exits; that boundary is
+intentional and remains documented.

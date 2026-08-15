@@ -615,3 +615,31 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   carrier builder currently supports Linux/macOS only, so Windows engineer
   mode still needs an explicit product/runtime decision rather than a
   misleading partial install.
+
+### v0.2.17 public-release engineer proof (2026-08-15)
+
+- [x] Merged the engineer-only carrier safeguards in PR #14 and published
+  `v0.2.17` from the merged main commit. Release workflow `31903646186`
+  passed terminal tests, six terminal archives, four macOS/Linux carrier
+  archives, native Linux x64/ARM64 sandbox smoke, the Windows terminal
+  boundary smoke, and immutable release publication.
+- [x] Installed `v0.2.17` through the public release installer with
+  `SALAD_FORCE_REMOTE=1`; the installed binary reported `salad 0.2.17`, the
+  managed carrier passed `harness doctor`, and the installed carrier hash was
+  `71aaeac3eafa88696768fa40a489fafb8052e3a5bbb03f4284f3eb7963c9a941`.
+- [x] Ran the published bytes in the disposable Node workspace: the model
+  read `AGENTS.md`, made a small test improvement, ran `npm test` with one
+  passing test, started `env PORT=4325 npm run start` in a persistent
+  terminal, verified `/health` with an external curl, surfaced a read-only
+  reviewer result, and left no listener on port 4325.
+- [x] Verified public-release cancellation with a Python server on port 4326:
+  external `lsof` and curl observed it while the run was active; interrupting
+  Salad made the saved run `cancelled` and the port closed without manual
+  process cleanup.
+- [x] Verified public-release resume creates a new run and restores the prior
+  conversation's test/reviewer/server-cleanup context. It intentionally does
+  not claim that an old OS process or PTY survives carrier shutdown.
+- [ ] Remaining stronger-release gates are unchanged: native Windows DSH
+  carrier/runtime, domain-scoped network allowlisting, package provenance and
+  rollback hardening, and fuller replay/reconnect semantics. `v0.2.17` is an
+  engineer preview for macOS/Linux, not universal Windows engineer support.
