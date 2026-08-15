@@ -568,10 +568,10 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   built successfully, a collaborator returned a concrete review, and a real
   persistent terminal served port 4321, was checked externally, and was closed
   with no listener remaining.
-- [x] Found a real remaining UX gap: the model can mishandle shell environment
-  assignments for long-running commands and report the wrong port. Direct
-  command arguments work through the persistent terminal path; this needs a
-  follow-up evaluation before release.
+- [x] Found and corrected the long-running command UX gap: the candidate now
+  gives an explicit `env PORT=...` example and verifies the actual listener.
+  A real Node server started on port 4324, returned `/health` over curl, and
+  both terminal sessions closed cleanly.
 - [x] Ran live cancellation against the rebuilt macOS candidate: a Python
   server was externally confirmed on port 4322, Ctrl-C cancelled the engineer
   run, and the child port closed without manual cleanup.

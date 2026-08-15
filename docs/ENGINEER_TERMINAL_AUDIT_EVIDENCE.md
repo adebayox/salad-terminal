@@ -16,15 +16,18 @@ test, and `npm test` passed after the run was explicitly started with
 `--network loopback`. A fresh run without loopback correctly failed to bind
 localhost, but the model did not clearly explain that recovery path.
 
-The public carrier also did not reliably honor an environment assignment in a
+The public carrier did not reliably honor an environment assignment in a
 long-running command: it reported success while the app remained on its
-default port. This exposed a real developer-experience gap. A candidate
-carrier rebuilt from the pinned DeepSeek commit with stronger persistent-
-terminal instructions then opened a terminal, ran `python3 -m http.server 4321
---bind 127.0.0.1`, verified it from another terminal, received the directory
-listing, and closed the terminal with no listener left behind. Its collaborator
-review returned a concrete health-endpoint finding. The candidate was restored
-afterward; the managed install is again the exact public `v0.2.16` runtime.
+default port. This exposed a real developer-experience gap. The corrected
+candidate, rebuilt from the pinned DeepSeek commit with stronger persistent-
+terminal instructions, then opened a terminal, ran `python3 -m http.server
+4321 --bind 127.0.0.1`, verified it from another terminal, received the
+directory listing, and closed the terminal with no listener left behind. With
+the explicit `env PORT=4324 npm run start` guidance, the real Node app started
+on 4324, returned the health response over curl, and both terminal sessions
+closed cleanly. Its collaborator review returned a concrete health-endpoint
+finding. The candidate was restored afterward; the managed install is again
+the exact public `v0.2.16` runtime.
 
 The candidate also passed live cancellation: a Python server was externally
 confirmed on port 4322, Salad Terminal received Ctrl-C, the run became
