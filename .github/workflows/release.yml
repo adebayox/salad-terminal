@@ -259,11 +259,19 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $helpText -notmatch 'normal Salad chat is a separate product path') {
             throw 'Windows engineer help/isolation contract failed'
           }
-          $ErrorActionPreference = 'Continue'
-          $doctor = & $terminal harness doctor 2>&1
-          $doctorExit = $LASTEXITCODE
-          $ErrorActionPreference = 'Stop'
-          $doctorText = $doctor -join "`n"
+          $doctorStart = [System.Diagnostics.ProcessStartInfo]::new()
+          $doctorStart.FileName = $terminal
+          $doctorStart.ArgumentList.Add('harness')
+          $doctorStart.ArgumentList.Add('doctor')
+          $doctorStart.RedirectStandardOutput = $true
+          $doctorStart.RedirectStandardError = $true
+          $doctorStart.UseShellExecute = $false
+          $doctorProcess = [System.Diagnostics.Process]::new()
+          $doctorProcess.StartInfo = $doctorStart
+          [void]$doctorProcess.Start()
+          $doctorText = $doctorProcess.StandardOutput.ReadToEnd() + $doctorProcess.StandardError.ReadToEnd()
+          $doctorProcess.WaitForExit()
+          $doctorExit = $doctorProcess.ExitCode
           if ($doctorExit -eq 0 -or $doctorText -notmatch 'executable is unavailable|managed install: not installed') {
             throw "Windows must report the missing engineer carrier explicitly: $doctorText"
           }
