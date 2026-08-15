@@ -250,6 +250,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   outside the workspace were blocked; symlink writes to a home-directory path
   outside the workspace were blocked. Platform temp roots are intentionally
   writable and must be described as such.
+- [x] Exercise the configured DSH background-subagent path through the shipped
+  carrier in the disposable workspace. The subagent completed and the parent
+  agent created and verified a file. The first attempt exposed a test-launch
+  cwd mistake and created a temporary home README; that file was removed, and
+  an explicit-cd rerun recorded the correct disposable workspace.
 - [x] Read DeepSeek's source architecture. It has durable event-sourced
   sessions, subagents, background jobs, workflows, sandbox policy, and replay
   concepts. Salad's ACP adapter currently exposes fresh sessions only.
