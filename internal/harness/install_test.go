@@ -117,11 +117,18 @@ func TestInstallSignsMacOSMachORuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	installed, err := Install(source, "", false)
+	installed, err := InstallWithHelper(source, "", source, false)
 	if err != nil {
-		t.Fatalf("Install() error = %v", err)
+		t.Fatalf("InstallWithHelper() error = %v", err)
 	}
 	if err := exec.Command("codesign", "--verify", "--verbose", installed).Run(); err != nil {
 		t.Fatalf("installed Mach-O is not executable under macOS signing policy: %v", err)
+	}
+	helper := installed + "-spawn-helper"
+	if _, err := os.Stat(helper); err != nil {
+		t.Fatalf("installed spawn helper missing: %v", err)
+	}
+	if _, _, _, installed, err := InstallationStatus(); err != nil || !installed {
+		t.Fatalf("InstallationStatus() = installed %v, err %v; want valid helper install", installed, err)
 	}
 }

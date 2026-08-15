@@ -195,9 +195,10 @@ prepare_harness_release() {
     return 1
   fi
   local runtime_path="${tmp}/harness/dsh-acp-agent-${target}"
+  local helper_path="${tmp}/harness/dsh-acp-agent-${target}-spawn-helper"
   local config_path="${tmp}/harness/cordis.yml"
-  if [[ ! -x "$runtime_path" || ! -f "$config_path" ]]; then
-    echo "error: harness archive is missing its runtime or cordis.yml" >&2
+  if [[ ! -x "$runtime_path" || ! -f "$config_path" || ("$target" == darwin-* && ! -x "$helper_path") ]]; then
+    echo "error: harness archive is missing its runtime, cordis.yml, or macOS spawn helper" >&2
     return 1
   fi
 }
@@ -207,6 +208,7 @@ install_harness_release() {
   local target="$2"
   local tmp="$3"
   local runtime_path="${tmp}/harness/dsh-acp-agent-${target}"
+  local helper_path="${tmp}/harness/dsh-acp-agent-${target}-spawn-helper"
   local config_path="${tmp}/harness/cordis.yml"
 
   if [[ "${SALAD_SKIP_HARNESS:-}" == "1" ]]; then
@@ -218,10 +220,16 @@ install_harness_release() {
       return 1
     fi
   fi
-  if ! "${SALAD_INSTALLED_BIN_DIR}/salad" harness install \
-    --runtime "$runtime_path" \
-    --config "$config_path" \
-    --force; then
+  local -a install_args=(
+    harness install
+    --runtime "$runtime_path"
+    --config "$config_path"
+    --force
+  )
+  if [[ "$target" == darwin-* ]]; then
+    install_args+=(--spawn-helper "$helper_path")
+  fi
+  if ! "${SALAD_INSTALLED_BIN_DIR}/salad" "${install_args[@]}"; then
     echo "error: Salad could not install the harness runtime" >&2
     return 1
   fi

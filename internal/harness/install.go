@@ -24,10 +24,12 @@ const (
 )
 
 type installation struct {
-	Runtime     string    `json:"runtime"`
-	Config      string    `json:"config,omitempty"`
-	SHA256      string    `json:"sha256"`
-	InstalledAt time.Time `json:"installed_at"`
+	Runtime      string    `json:"runtime"`
+	Helper       string    `json:"helper,omitempty"`
+	Config       string    `json:"config,omitempty"`
+	SHA256       string    `json:"sha256"`
+	HelperSHA256 string    `json:"helper_sha256,omitempty"`
+	InstalledAt  time.Time `json:"installed_at"`
 }
 
 func installPaths() (dir, runtimePath, manifestPath string, err error) {
@@ -52,6 +54,13 @@ func previousInstallPaths() (runtimePath, configPath, manifestPath string, err e
 	}
 	dir := filepath.Dir(runtimePath)
 	return filepath.Join(dir, runtimeFilePrefix+".previous"), filepath.Join(dir, "cordis.yml.previous"), filepath.Join(dir, "install.previous.json"), nil
+}
+
+func managedHelperPath(runtimePath string) string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	return runtimePath + "-spawn-helper"
 }
 
 // InstalledCommand returns the managed ACP carrier when it exists. Explicit
@@ -85,6 +94,13 @@ func InstalledConfig() string {
 // private config directory. It never replaces an existing install unless
 // force is true, and it writes the manifest only after both files are durable.
 func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
+	return InstallWithHelper(sourceRuntime, sourceConfig, "", force)
+}
+
+// InstallWithHelper copies a verified carrier, its optional macOS node-pty
+// spawn helper, and optional config into Salad's private config directory.
+// The helper is required when the carrier is a Mach-O executable on macOS.
+func InstallWithHelper(sourceRuntime, sourceConfig, sourceHelper string, force bool) (string, error) {
 	sourceRuntime = strings.TrimSpace(sourceRuntime)
 	if sourceRuntime == "" {
 		return "", errors.New("runtime path is required; pass --runtime /path/to/dsh-acp-agent")
@@ -98,6 +114,25 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 	}
 	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		return "", errors.New("runtime file is not executable")
+	}
+	runtimeIsMachO := isMachOFile(sourceRuntime)
+	if runtime.GOOS == "darwin" && runtimeIsMachO && strings.TrimSpace(sourceHelper) == "" {
+		return "", errors.New("macOS Mach-O harness runtime requires its -spawn-helper sidecar")
+	}
+	if sourceHelper != "" {
+		if runtime.GOOS != "darwin" {
+			return "", errors.New("spawn helper is only supported for macOS harness carriers")
+		}
+		helperInfo, helperErr := os.Stat(sourceHelper)
+		if helperErr != nil {
+			return "", fmt.Errorf("spawn helper: %w", helperErr)
+		}
+		if helperInfo.IsDir() {
+			return "", errors.New("spawn helper path must be an executable file")
+		}
+		if runtime.GOOS != "windows" && helperInfo.Mode()&0o111 == 0 {
+			return "", errors.New("spawn helper is not executable")
+		}
 	}
 	if sourceConfig != "" {
 		configInfo, configErr := os.Stat(sourceConfig)
@@ -125,6 +160,8 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	previousHelper := managedHelperPath(previousRuntime)
+	currentHelper := managedHelperPath(runtimePath)
 	if force {
 		// Keep one recoverable managed backup before replacing a release. This
 		// is intentionally inside Salad's private config directory; it never
@@ -136,6 +173,17 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 		} else if os.IsNotExist(statErr) {
 			if err := removeIfPresent(previousRuntime); err != nil {
 				return "", fmt.Errorf("clear stale harness runtime backup: %w", err)
+			}
+		}
+		if currentHelper != "" {
+			if _, statErr := os.Stat(currentHelper); statErr == nil {
+				if err := copyFileAtomic(currentHelper, previousHelper, 0o700); err != nil {
+					return "", fmt.Errorf("backup existing harness spawn helper: %w", err)
+				}
+			} else if os.IsNotExist(statErr) {
+				if err := removeIfPresent(previousHelper); err != nil {
+					return "", fmt.Errorf("clear stale harness spawn helper backup: %w", err)
+				}
 			}
 		}
 		if _, statErr := os.Stat(manifestPath); statErr == nil {
@@ -161,8 +209,20 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 	if err := copyFileAtomic(sourceRuntime, runtimePath, 0o700); err != nil {
 		return "", fmt.Errorf("install runtime: %w", err)
 	}
+	installedHelper := ""
+	if sourceHelper != "" {
+		installedHelper = currentHelper
+		if err := copyFileAtomic(sourceHelper, installedHelper, 0o700); err != nil {
+			_ = restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, installedHelper, "", manifestPath)
+			return "", fmt.Errorf("install spawn helper: %w", err)
+		}
+	}
 	if err := signMacOSMachO(runtimePath); err != nil {
-		_ = restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, "", manifestPath)
+		_ = restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, installedHelper, "", manifestPath)
+		return "", err
+	}
+	if err := signMacOSMachO(installedHelper); err != nil {
+		_ = restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, installedHelper, "", manifestPath)
 		return "", err
 	}
 
@@ -170,23 +230,31 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 	if sourceConfig != "" {
 		installedConfig = filepath.Join(dir, "cordis.yml")
 		if err := copyFileAtomic(sourceConfig, installedConfig, 0o600); err != nil {
-			_ = restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, installedConfig, manifestPath)
+			_ = restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, installedHelper, installedConfig, manifestPath)
 			return "", fmt.Errorf("install config: %w", err)
 		}
 	}
 	hash, err := fileSHA256(runtimePath)
 	if err != nil {
-		_ = restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, installedConfig, manifestPath)
+		_ = restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, installedHelper, installedConfig, manifestPath)
 		return "", fmt.Errorf("hash installed runtime: %w", err)
 	}
-	record := installation{Runtime: runtimePath, Config: installedConfig, SHA256: hash, InstalledAt: time.Now().UTC()}
+	helperHash := ""
+	if installedHelper != "" {
+		helperHash, err = fileSHA256(installedHelper)
+		if err != nil {
+			_ = restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, installedHelper, installedConfig, manifestPath)
+			return "", fmt.Errorf("hash installed spawn helper: %w", err)
+		}
+	}
+	record := installation{Runtime: runtimePath, Helper: installedHelper, Config: installedConfig, SHA256: hash, HelperSHA256: helperHash, InstalledAt: time.Now().UTC()}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
-		_ = restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, installedConfig, manifestPath)
+		_ = restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, installedHelper, installedConfig, manifestPath)
 		return "", err
 	}
 	if err := writeAtomic(manifestPath, append(data, '\n'), 0o600); err != nil {
-		_ = restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, installedConfig, manifestPath)
+		_ = restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, installedHelper, installedConfig, manifestPath)
 		return "", fmt.Errorf("write harness install record: %w", err)
 	}
 	return runtimePath, nil
@@ -199,6 +267,9 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 // Release checksums are verified before Install is called, and the manifest
 // records the post-signing bytes that Salad will execute.
 func signMacOSMachO(path string) error {
+	if path == "" {
+		return nil
+	}
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
@@ -234,13 +305,18 @@ func Rollback() (string, error) {
 		return "", err
 	}
 	currentConfig := filepath.Join(filepath.Dir(runtimePath), "cordis.yml")
-	if err := restorePreviousInstall(runtimePath, configPath, manifestPath, currentRuntime, currentConfig, currentManifest); err != nil {
+	currentHelper := managedHelperPath(currentRuntime)
+	if err := restorePreviousInstallWithHelper(runtimePath, managedHelperPath(runtimePath), configPath, manifestPath, currentRuntime, currentHelper, currentConfig, currentManifest); err != nil {
 		return "", fmt.Errorf("restore previous harness installation: %w", err)
 	}
 	return currentRuntime, nil
 }
 
 func restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, configPath, manifestPath string) error {
+	return restorePreviousInstallWithHelper(previousRuntime, "", previousConfig, previousManifest, runtimePath, "", configPath, manifestPath)
+}
+
+func restorePreviousInstallWithHelper(previousRuntime, previousHelper, previousConfig, previousManifest, runtimePath, helperPath, configPath, manifestPath string) error {
 	var firstErr error
 	if _, err := os.Stat(previousRuntime); err == nil {
 		if restoreErr := copyFileAtomic(previousRuntime, runtimePath, 0o700); restoreErr != nil {
@@ -252,6 +328,19 @@ func restorePreviousInstall(previousRuntime, previousConfig, previousManifest, r
 		}
 	} else if firstErr == nil {
 		firstErr = err
+	}
+	if helperPath != "" {
+		if _, err := os.Stat(previousHelper); err == nil {
+			if restoreErr := copyFileAtomic(previousHelper, helperPath, 0o700); restoreErr != nil && firstErr == nil {
+				firstErr = restoreErr
+			}
+		} else if os.IsNotExist(err) {
+			if removeErr := removeIfPresent(helperPath); removeErr != nil && firstErr == nil {
+				firstErr = removeErr
+			}
+		} else if firstErr == nil {
+			firstErr = err
+		}
 	}
 	if configPath != "" {
 		if _, err := os.Stat(previousConfig); err == nil {
@@ -328,7 +417,38 @@ func InstallationStatus() (runtimePath, configPath, digest string, installed boo
 	if !strings.EqualFold(digest, record.SHA256) {
 		return record.Runtime, record.Config, digest, false, errors.New("installed harness runtime checksum mismatch")
 	}
+	if runtime.GOOS == "darwin" && isMachOFile(record.Runtime) {
+		helperPath := record.Helper
+		if helperPath == "" {
+			helperPath = managedHelperPath(record.Runtime)
+		}
+		helperInfo, helperErr := os.Stat(helperPath)
+		if helperErr != nil {
+			return record.Runtime, record.Config, record.SHA256, false, fmt.Errorf("installed harness spawn helper is unavailable: %w", helperErr)
+		}
+		if helperInfo.IsDir() || helperInfo.Mode()&0o111 == 0 {
+			return record.Runtime, record.Config, record.SHA256, false, errors.New("installed harness spawn helper is not executable")
+		}
+		if record.HelperSHA256 != "" {
+			helperDigest, helperHashErr := fileSHA256(helperPath)
+			if helperHashErr != nil {
+				return record.Runtime, record.Config, record.SHA256, false, fmt.Errorf("verify harness spawn helper: %w", helperHashErr)
+			}
+			if !strings.EqualFold(helperDigest, record.HelperSHA256) {
+				return record.Runtime, record.Config, record.SHA256, false, errors.New("installed harness spawn helper checksum mismatch")
+			}
+		}
+	}
 	return record.Runtime, record.Config, record.SHA256, true, nil
+}
+
+func isMachOFile(path string) bool {
+	file, err := macho.Open(path)
+	if err != nil {
+		return false
+	}
+	_ = file.Close()
+	return true
 }
 
 func fileSHA256(path string) (string, error) {

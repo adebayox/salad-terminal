@@ -695,7 +695,7 @@ func runHarnessInstall(args []string) error {
 		printCommandUsage("harness")
 		return nil
 	}
-	runtimePath, configPath := "", ""
+	runtimePath, helperPath, configPath := "", "", ""
 	force := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -711,19 +711,28 @@ func runHarnessInstall(args []string) error {
 			}
 			configPath = args[i+1]
 			i++
+		case "--spawn-helper":
+			if i+1 >= len(args) {
+				return fmt.Errorf("harness install --spawn-helper needs a path")
+			}
+			helperPath = args[i+1]
+			i++
 		case "--force":
 			force = true
 		default:
 			return fmt.Errorf("unknown harness install option %q", args[i])
 		}
 	}
-	installed, err := harness.Install(runtimePath, configPath, force)
+	installed, err := harness.InstallWithHelper(runtimePath, configPath, helperPath, force)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("Installed Salad Harness runtime: %s\n", installed)
 	if configPath != "" {
 		fmt.Println("Installed project config for future runs.")
+	}
+	if helperPath != "" {
+		fmt.Println("Installed macOS terminal spawn helper.")
 	}
 	fmt.Println("Next: trust the project, then run `salad harness \"inspect this project and make a plan\"`.")
 	return nil
@@ -1003,7 +1012,7 @@ runtime is installed automatically by the macOS/Linux release installer.
 "salad harness rollback" restores the last managed carrier. This does not use
 or change your normal Salad chat. "salad harness doctor" checks the setup.
 
-  install --runtime <path> [--config <path>] [--force]
+  install --runtime <path> [--spawn-helper <path>] [--config <path>] [--force]
   rollback                 Restore the previous managed runtime
   runs                     List saved runs for this workspace
   resume <run-id> <prompt>  Continue from a saved local run record
