@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a provider-free ACP boot/prompt smoke against a packaged DSH carrier."""
+"""Run an ACP boot, resume, and provider-recovery smoke against a carrier."""
 
 from __future__ import annotations
 
@@ -19,7 +19,16 @@ class MockDeepSeek(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler contract
         length = int(self.headers.get("content-length", "0"))
         body = self.rfile.read(length)
-        self.requests.append(json.loads(body))
+        request = json.loads(body)
+        self.requests.append(request)
+        if "trigger-provider-error" in json.dumps(request):
+            encoded = json.dumps({"error": {"message": "simulated provider outage"}}).encode()
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
         chunks = [
             {"choices": [{"delta": {"role": "assistant", "content": "LINUX_CARRIER_OK"}, "finish_reason": None}]},
             {
@@ -166,7 +175,61 @@ def main() -> int:
             raise RuntimeError(f"ACP resumed prompt failed: {resumed_prompt}; output={resumed_output}")
         if len(MockDeepSeek.requests) != 2:
             raise RuntimeError(f"expected two mock provider requests after resume, got {len(MockDeepSeek.requests)}")
-        print(json.dumps({"initialize": "ok", "session_new": "ok", "prompt": "ok", "resume": "ok", "provider_requests": 2}))
+
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "session/prompt",
+                "params": {"sessionId": session_id, "prompt": [{"type": "text", "text": "trigger-provider-error"}]},
+            },
+        )
+        _, failed_prompt = read_response(process, 8)
+        if "error" not in failed_prompt:
+            raise RuntimeError(f"provider failure did not surface as ACP error: {failed_prompt}")
+
+        send(process, {"jsonrpc": "2.0", "id": 9, "method": "session/close", "params": {"sessionId": session_id}})
+        _, failed_closed = read_response(process, 9)
+        if "result" not in failed_closed:
+            raise RuntimeError(f"ACP session/close after provider failure failed: {failed_closed}")
+        assert process.stdin is not None
+        process.stdin.close()
+        process.wait(timeout=10)
+
+        process = launch()
+        send(process, {"jsonrpc": "2.0", "id": 10, "method": "initialize", "params": {"protocolVersion": 1, "clientCapabilities": {}}})
+        _, recovered_initialized = read_response(process, 10)
+        if "result" not in recovered_initialized:
+            raise RuntimeError(f"ACP recovery initialize failed: {recovered_initialized}")
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "session/resume",
+                "params": {"sessionId": session_id, "cwd": str(args.workspace), "mcpServers": []},
+            },
+        )
+        _, recovered = read_response(process, 11)
+        if "result" not in recovered:
+            raise RuntimeError(f"ACP recovery session/resume failed: {recovered}")
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 12,
+                "method": "session/prompt",
+                "params": {"sessionId": session_id, "prompt": [{"type": "text", "text": "Reply with the recovery marker only."}]},
+            },
+        )
+        recovered_lines, recovered_prompt = read_response(process, 12)
+        recovered_output = "\n".join(recovered_lines)
+        if "result" not in recovered_prompt or "LINUX_CARRIER_OK" not in recovered_output:
+            raise RuntimeError(f"ACP recovery prompt failed: {recovered_prompt}; output={recovered_output}")
+        if len(MockDeepSeek.requests) != 4:
+            raise RuntimeError(f"expected four mock provider requests after recovery, got {len(MockDeepSeek.requests)}")
+        print(json.dumps({"initialize": "ok", "session_new": "ok", "prompt": "ok", "resume": "ok", "provider_error": "ok", "recovery": "ok", "provider_requests": 4}))
         return 0
     finally:
         try:
