@@ -461,3 +461,28 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   sandbox enforcement, reconnect/replay, cancellation, and package install.
   Normal Salad Chat remains outside this work and must stay a no-change
   regression check.
+
+### v0.2.14 exact-release audit (2026-08-15)
+
+- [x] Found and fixed the public macOS packaging blocker: DeepSeek's required
+  `-spawn-helper` sidecar was missing from v0.2.13, so persistent PTYs failed
+  with `posix_spawnp failed`. The fix covers build output, archives, checksums,
+  installer validation, managed install, doctor integrity, and rollback.
+- [x] Merged PR #11 and published v0.2.14. Release workflow `31892583809`
+  passed Go tests/vet, all six terminal builds, all four carrier builds, and
+  publish. The exact arm64 harness archive checksum matched and contained the
+  carrier, config, and executable spawn helper.
+- [x] Installed the exact v0.2.14 bytes through the installer. Doctor passed;
+  the managed carrier and helper are present under Salad's private config.
+- [x] Ran the real disposable Node project: read instructions, one read-only
+  collaborator, minimal source edit, project test, project build, persistent
+  server, external HTTP request, same-process follow-up, and explicit terminal
+  close with external port verification.
+- [x] Found and fixed a resume safety gap: concurrent resume of an active run
+  can make two carriers write one session log and corrupt it. Resume now
+  refuses `starting`/`running` records and documents that live PTYs/dev servers
+  belong to the current carrier process.
+- [ ] Publish v0.2.15 with the resume guard, then rerun the exact-release
+  resume/cancellation matrix from a clean workspace. Native Linux/Windows
+  runtime proof, network allowlisting, reconnect/replay, and browser receipt
+  verification remain open; normal Salad Chat remains untouched.

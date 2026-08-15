@@ -361,6 +361,9 @@ func runHarnessMode(args []string, interactive bool) error {
 		if err != nil {
 			return err
 		}
+		if record.Status == "starting" || record.Status == "running" {
+			return fmt.Errorf("cannot resume active run %q; close the existing Salad engineer process first", record.ID)
+		}
 		root, err := workspace.ResolveRoot("")
 		if err != nil || root != record.Workspace {
 			return fmt.Errorf("resume must run from the original workspace: %s", record.Workspace)
@@ -1043,7 +1046,9 @@ command. Network access is denied by default. To request it for this run:
   salad engineer --network allow
 
 Use "salad engineer runs" to see saved local sessions for this workspace,
-then "salad engineer resume <run-id>" to continue one later.
+then "salad engineer resume <run-id>" to continue one later. Resume only after
+the earlier engineer process has ended; a live PTY/dev server belongs to the
+current process and is not carried into a new one.
 `)
 	case "doctor":
 		fmt.Println("Usage: salad doctor")
