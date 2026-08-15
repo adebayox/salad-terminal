@@ -33,6 +33,10 @@ type Options struct {
 	Input                                    io.Reader
 	InputCloser                              io.Closer
 	Output                                   io.Writer
+	// PromptTimeout bounds one model turn. Persistent terminal commands are
+	// expected to return after they are opened; this protects the CLI from a
+	// provider or child-agent turn that stops making progress forever.
+	PromptTimeout time.Duration
 	// OnSessionID is called as soon as the runtime has identified the session.
 	// The CLI uses it to make resume state durable before a long model turn or
 	// an unexpected process exit can lose the in-memory result.

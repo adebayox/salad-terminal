@@ -19,7 +19,10 @@ import (
 	"time"
 )
 
-const defaultACPCommand = "dsh-acp-demo"
+const (
+	defaultACPCommand    = "dsh-acp-demo"
+	defaultPromptTimeout = 10 * time.Minute
+)
 
 type acpSessionUpdate struct {
 	SessionID string `json:"sessionId"`
@@ -91,6 +94,9 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 	if opts.Output == nil {
 		opts.Output = io.Discard
 	}
+	if opts.PromptTimeout <= 0 {
+		opts.PromptTimeout = promptTimeoutFromEnv()
+	}
 	if opts.Input == nil {
 		opts.Input = os.Stdin
 	}
@@ -115,6 +121,8 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 	if err := cmd.Start(); err != nil {
 		return Result{}, fmt.Errorf("start DeepSeek Harness ACP (%s): %w", opts.Command, err)
 	}
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 
 	finished := make(chan struct{})
 	var killOnce sync.Once
@@ -167,7 +175,7 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 	// cleanup fallback because the ACP server owns all sessions on this child.
 	go func() {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			if sessionID := getSession(); sessionID != "" {
 				_ = writeFrame(map[string]any{
 					"jsonrpc": "2.0", "method": "session/cancel",
@@ -194,19 +202,38 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 			if err := scanner.Err(); err != nil {
 				return rpcFrame{}, fmt.Errorf("read ACP response: %w", err)
 			}
-			if ctx.Err() != nil {
-				return rpcFrame{}, ctx.Err()
+			if runCtx.Err() != nil {
+				return rpcFrame{}, runCtx.Err()
 			}
 			return rpcFrame{}, errors.New("DeepSeek Harness ACP closed its output")
 		}
 		return decodeFrame(scanner.Bytes())
+	}
+	readContext := func(readCtx context.Context) (rpcFrame, error) {
+		result := make(chan struct {
+			frame rpcFrame
+			err   error
+		}, 1)
+		go func() {
+			frame, err := read()
+			result <- struct {
+				frame rpcFrame
+				err   error
+			}{frame: frame, err: err}
+		}()
+		select {
+		case output := <-result:
+			return output.frame, output.err
+		case <-readCtx.Done():
+			return rpcFrame{}, readCtx.Err()
+		}
 	}
 	request := func(id, method string, params any) (json.RawMessage, error) {
 		if err := writeFrame(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 			return nil, err
 		}
 		for {
-			frame, err := read()
+			frame, err := readContext(runCtx)
 			if err != nil {
 				return nil, err
 			}
@@ -275,6 +302,12 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 	}
 
 	promptOnce := func(id, text string) error {
+		promptCtx := runCtx
+		cancelPrompt := func() {}
+		if opts.PromptTimeout > 0 {
+			promptCtx, cancelPrompt = context.WithTimeout(runCtx, opts.PromptTimeout)
+		}
+		defer cancelPrompt()
 		if err := writeFrame(map[string]any{
 			"jsonrpc": "2.0", "id": id, "method": "session/prompt",
 			"params": map[string]any{
@@ -285,8 +318,12 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 			return err
 		}
 		for {
-			frame, err := read()
+			frame, err := readContext(promptCtx)
 			if err != nil {
+				if errors.Is(err, context.DeadlineExceeded) {
+					cancelRun()
+					return fmt.Errorf("ACP prompt timed out after %s; set SALAD_ENGINEER_PROMPT_TIMEOUT to extend it or press Ctrl-C to cancel: %w", opts.PromptTimeout, err)
+				}
 				return err
 			}
 			if frame.Method != "" {
@@ -350,6 +387,18 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 		}
 	}
 	return Result{SessionID: sessionID}, nil
+}
+
+func promptTimeoutFromEnv() time.Duration {
+	value := strings.TrimSpace(os.Getenv("SALAD_ENGINEER_PROMPT_TIMEOUT"))
+	if value == "" {
+		return defaultPromptTimeout
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return defaultPromptTimeout
+	}
+	return duration
 }
 
 // readLineContext prevents Ctrl-C from leaving the engineer command blocked
