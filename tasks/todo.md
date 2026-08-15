@@ -569,6 +569,9 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   `31898110098` passed on native Linux x64 and ARM64. It booted the packaged
   carrier through ACP against a local mock provider and passed the network
   deny check on both architectures.
+- [x] Re-ran the corrected release workflow `31898839394` after making the
+  Linux loopback limitation explicit; terminal archives, carrier builds, and
+  both native Linux carrier smoke jobs passed.
 - [ ] Add native Windows
   installer/runtime evidence. DeepSeek's pinned carrier builder currently
   supports Linux/macOS only, so Windows engineer mode still needs an explicit
