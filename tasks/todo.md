@@ -550,10 +550,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Removed the empty synthetic prompt from no-argument interactive resume;
   a local build now restores directly to `[salad engineer] >`, and an explicit
   follow-up returned `RESUME_NO_EMPTY`.
-- [ ] Native Linux/Windows carrier and sandbox proof, domain-level network
-  allowlisting, package provenance, reconnect/replay, cancellation matrix,
-  and browser receipt verification remain release gates. Normal Salad Chat
-  remains outside this work and has no changed files.
+- [ ] Native Windows carrier and sandbox proof, domain-level network
+  allowlisting, package provenance, cancellation matrix, and browser receipt
+  verification remain release gates. Native Linux packaged session resume is
+  now verified. Normal Salad Chat remains outside this work and has no changed
+  files.
 
 ### Native Linux release smoke (2026-08-15)
 
@@ -577,6 +578,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   that normal Salad Chat is a separate path, and `harness doctor` reported the
   missing DSH carrier explicitly. This validates the Windows terminal
   boundary; it does not claim Windows engineer runtime support.
+- [x] Native Linux x64/ARM64 release workflow `31900302285` passed a packaged
+  cross-process session test: ACP initialized, the first prompt completed, the
+  session closed, a fresh carrier process resumed the same session, and the
+  second prompt completed with exactly two provider requests on each
+  architecture.
 - [ ] Add a native Windows DSH carrier and engineer runtime. DeepSeek's pinned
   carrier builder currently supports Linux/macOS only, so Windows engineer
   mode still needs an explicit product/runtime decision rather than a
