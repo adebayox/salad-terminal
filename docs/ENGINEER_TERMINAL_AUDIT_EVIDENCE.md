@@ -26,6 +26,10 @@ listing, and closed the terminal with no listener left behind. Its collaborator
 review returned a concrete health-endpoint finding. The candidate was restored
 afterward; the managed install is again the exact public `v0.2.16` runtime.
 
+The candidate also passed live cancellation: a Python server was externally
+confirmed on port 4322, Salad Terminal received Ctrl-C, the run became
+`cancelled`, and the port closed without manually killing the child.
+
 - `go test ./...`, `go vet ./...`, `bash -n tools/build-dsh-acp-carrier.sh`,
   and Python syntax compilation pass.
 - Public `v0.2.12` install was run in an isolated prefix. The terminal binary

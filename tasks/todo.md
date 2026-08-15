@@ -572,6 +572,9 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   assignments for long-running commands and report the wrong port. Direct
   command arguments work through the persistent terminal path; this needs a
   follow-up evaluation before release.
+- [x] Ran live cancellation against the rebuilt macOS candidate: a Python
+  server was externally confirmed on port 4322, Ctrl-C cancelled the engineer
+  run, and the child port closed without manual cleanup.
 - [ ] Publish the carrier guidance change and repeat the clean exact-release
   workflow, including environment-based app startup, cancellation, and
   cross-platform release checks.
