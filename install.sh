@@ -43,6 +43,9 @@ cleanup_dir() {
 
 SALAD_INSTALL_TMP_DIR=""
 SALAD_INSTALLED_BIN_DIR=""
+SALAD_BINARY_DEST=""
+SALAD_BINARY_BACKUP=""
+SALAD_BINARY_HAD_PREVIOUS="0"
 
 cleanup_install_tmp_dir() {
   if [[ -n "$SALAD_INSTALL_TMP_DIR" ]]; then
@@ -67,9 +70,22 @@ resolve_bin_dir() {
 
 install_binary() {
   local src="$1"
-  local bin_dir
+  local bin_dir dest temporary
   bin_dir="$(resolve_bin_dir)"
-  install -m 755 "$src" "${bin_dir}/salad"
+  dest="${bin_dir}/salad"
+  if [[ -L "$dest" ]]; then
+    echo "error: refusing to replace symlink at ${dest}; remove it and retry" >&2
+    exit 1
+  fi
+  temporary="$(mktemp "${bin_dir}/.salad-install.XXXXXX")"
+  if ! install -m 755 "$src" "$temporary"; then
+    rm -f -- "$temporary"
+    exit 1
+  fi
+  if ! mv -f -- "$temporary" "$dest"; then
+    rm -f -- "$temporary"
+    exit 1
+  fi
   SALAD_INSTALLED_BIN_DIR="$bin_dir"
   echo "Installed: ${bin_dir}/salad"
 
@@ -83,6 +99,33 @@ install_binary() {
   esac
 }
 
+begin_binary_transaction() {
+  local bin_dir="$1"
+  local backup_dir="$2"
+  SALAD_BINARY_DEST="${bin_dir}/salad"
+  SALAD_BINARY_BACKUP="${backup_dir}/salad.previous"
+  if [[ -e "$SALAD_BINARY_DEST" || -L "$SALAD_BINARY_DEST" ]]; then
+    if [[ -L "$SALAD_BINARY_DEST" ]]; then
+      echo "error: refusing to replace symlink at ${SALAD_BINARY_DEST}; remove it and retry" >&2
+      exit 1
+    fi
+    cp -p -- "$SALAD_BINARY_DEST" "$SALAD_BINARY_BACKUP"
+    SALAD_BINARY_HAD_PREVIOUS="1"
+  fi
+}
+
+rollback_binary_transaction() {
+  if [[ -z "$SALAD_BINARY_DEST" ]]; then
+    return 0
+  fi
+  if [[ "$SALAD_BINARY_HAD_PREVIOUS" == "1" ]]; then
+    install -m 755 "$SALAD_BINARY_BACKUP" "$SALAD_BINARY_DEST"
+  else
+    rm -f -- "$SALAD_BINARY_DEST"
+  fi
+  echo "Restored the previous Salad Terminal because the harness install failed." >&2
+}
+
 verify_release_checksum() {
   local archive="$1"
   local checksums_file="$2"
@@ -91,7 +134,7 @@ verify_release_checksum() {
   checksums="$(awk -v name="$name" '$2 == name { print $1; exit }' "$checksums_file")"
   if [[ -z "$checksums" ]]; then
     echo "error: SHA256SUMS does not contain ${name}" >&2
-    exit 1
+    return 1
   fi
   if command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$archive" | awk '{print $1}')"
@@ -101,11 +144,11 @@ verify_release_checksum() {
   fi
   if [[ "$actual" != "$checksums" ]]; then
     echo "error: checksum verification failed for $(basename "$archive")" >&2
-    exit 1
+    return 1
   fi
 }
 
-install_harness_release() {
+prepare_harness_release() {
   local base_url="$1"
   local target="$2"
   local tmp="$3"
@@ -123,27 +166,56 @@ install_harness_release() {
   if ! curl_download "${base_url}/${archive}" "${tmp}/${archive}"; then
     echo "error: this Salad release does not contain the required harness runtime (${archive})" >&2
     echo "Set SALAD_SKIP_HARNESS=1 only if you intentionally want terminal chat without the developer harness." >&2
-    exit 1
+    return 1
   fi
   if [[ ! -f "${tmp}/SHA256SUMS" ]]; then
     if ! curl_download "${base_url}/SHA256SUMS" "${tmp}/SHA256SUMS"; then
       echo "error: release has no SHA256SUMS manifest for the harness runtime" >&2
-      exit 1
+      return 1
     fi
   fi
-  verify_release_checksum "${tmp}/${archive}" "${tmp}/SHA256SUMS"
-  mkdir -p "${tmp}/harness"
-  tar -xzf "${tmp}/${archive}" -C "${tmp}/harness"
+  if ! verify_release_checksum "${tmp}/${archive}" "${tmp}/SHA256SUMS"; then
+    return 1
+  fi
+  if ! mkdir -p "${tmp}/harness"; then
+    echo "error: could not create the temporary harness directory" >&2
+    return 1
+  fi
+  if ! tar -xzf "${tmp}/${archive}" -C "${tmp}/harness"; then
+    echo "error: harness archive could not be extracted" >&2
+    return 1
+  fi
   local runtime_path="${tmp}/harness/dsh-acp-agent-${target}"
   local config_path="${tmp}/harness/cordis.yml"
   if [[ ! -x "$runtime_path" || ! -f "$config_path" ]]; then
     echo "error: harness archive is missing its runtime or cordis.yml" >&2
-    exit 1
+    return 1
   fi
-  "${SALAD_INSTALLED_BIN_DIR}/salad" harness install \
+}
+
+install_harness_release() {
+  local base_url="$1"
+  local target="$2"
+  local tmp="$3"
+  local runtime_path="${tmp}/harness/dsh-acp-agent-${target}"
+  local config_path="${tmp}/harness/cordis.yml"
+
+  if [[ "${SALAD_SKIP_HARNESS:-}" == "1" ]]; then
+    echo "Skipping Salad Harness runtime because SALAD_SKIP_HARNESS=1"
+    return 0
+  fi
+  if [[ ! -x "$runtime_path" || ! -f "$config_path" ]]; then
+    if ! prepare_harness_release "$base_url" "$target" "$tmp"; then
+      return 1
+    fi
+  fi
+  if ! "${SALAD_INSTALLED_BIN_DIR}/salad" harness install \
     --runtime "$runtime_path" \
     --config "$config_path" \
-    --force
+    --force; then
+    echo "error: Salad could not install the harness runtime" >&2
+    return 1
+  fi
 }
 
 detect_target() {
@@ -190,7 +262,7 @@ curl_download() {
 download_release_binary() {
   need_cmd curl
   need_cmd tar
-  local target archive url tmp ver resolved_tag checksums expected actual
+  local target archive url tmp ver resolved_tag checksums expected actual bin_dir
   target="$(detect_target)"
   archive="salad-${target}.tar.gz"
   resolved_tag="$(resolve_release_tag)"
@@ -232,8 +304,18 @@ download_release_binary() {
     ver="$resolved_tag"
   fi
 
+  bin_dir="$(resolve_bin_dir)"
+  if [[ "${SALAD_SKIP_HARNESS:-}" != "1" ]]; then
+    if ! prepare_harness_release "$base_url" "$target" "$tmp"; then
+      exit 1
+    fi
+  fi
+  begin_binary_transaction "$bin_dir" "$tmp"
   install_binary "${tmp}/salad"
-  install_harness_release "$base_url" "$target" "$tmp"
+  if ! install_harness_release "$base_url" "$target" "$tmp"; then
+    rollback_binary_transaction
+    exit 1
+  fi
   echo "Version: ${ver}"
 }
 

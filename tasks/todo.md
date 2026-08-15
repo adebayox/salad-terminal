@@ -329,5 +329,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   session restore. ACP remains the verified interactive path; JSON-RPC remains
   a compatibility path because it has no per-prompt cancellation and is not a
   distributed default carrier.
+- [x] Make the Unix installer transactional across the Salad binary and the
+  managed carrier: carrier download/extraction is preflighted before the
+  binary swap, and a carrier-install failure restores the previous binary.
+  Verified both a failed carrier archive (binary unchanged) and a failed
+  managed install after the binary swap (previous binary restored) with local
+  release fixtures.
 - [ ] Prove Linux and Windows carrier safety on native runners, and replace the
   preview's broad network escape hatch with visible allowlisted approval.
