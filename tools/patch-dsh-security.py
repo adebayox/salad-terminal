@@ -304,10 +304,8 @@ replace_once(
     timeoutMs: 2000
     disposeGraceMs: 500
 
-# Background jobs make long-running commands observable and cancellable.
-- id: jobs
-  name: '@deepseek-ai/dsh-jobs'
-
+# Background jobs make long-running commands observable and cancellable. The
+# local package supplies the abstract @deepseek-ai/dsh-jobs registry.
 - id: jobs-local
   name: '@deepseek-ai/dsh-jobs-local'
 
