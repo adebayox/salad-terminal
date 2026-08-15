@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -606,6 +607,13 @@ func postHarnessEventWithSequence(ctx context.Context, client *api.Client, chatI
 	if err := client.PostHarnessRunEvent(requestCtx, api.HarnessRunEventRequest{
 		ChatID: chatID, RunID: runID, WorkspaceID: workspaceID, Status: status, Summary: summary, Sequence: sequence,
 	}); err != nil {
+		// Lifecycle receipts are optional collaboration affordances. A server
+		// that has only the provider bridge intentionally returns 404 here; do
+		// not make a successful local engineer run look broken or noisy.
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "[harness] Salad chat receipt unavailable: %v\n", err)
 	}
 }

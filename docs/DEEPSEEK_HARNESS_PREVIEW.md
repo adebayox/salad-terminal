@@ -102,6 +102,11 @@ realtime events, not messages, so they do not trigger normal Salad AI
 routing. A signed-out account can still use the direct-key escape hatch;
 otherwise the authenticated Salad provider bridge is required.
 
+Receipts are optional. If the server has the provider bridge but not the
+separate receipt endpoint, the engineer run continues normally and the CLI
+does not treat the optional 404 as a run failure. The provider bridge is the
+required path for Salad-backed engineering.
+
 Each engineer session receives a local run ID. Continue a previous run
 explicitly with:
 
