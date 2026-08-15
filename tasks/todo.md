@@ -385,16 +385,18 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Confirmed normal chat remains outside the code path: only terminal
   harness files changed in this checkout; no `internal/chat`, realtime, TUI,
   SaladBE, or normal `salad say` files were modified.
-- [ ] The authenticated live provider smoke currently returns HTTP 404 from
-  `https://api.salad.ink/api/harness/provider/v1/chat/completions`. The route
-  exists in the dirty local SaladBE checkout but is not present on the live
-  API, so the patched carrier is not releasable through the Salad provider
-  until that additive engineer-only backend route is deployed and browser/API
-  verified. This is separate from normal Salad Chat.
-- [ ] Publish the patched carrier in a release, repeat clean-install and live
-  provider verification, then close the remaining Linux/Windows native safety,
-  domain-allowlist, long-lived process, reconnect/replay, and receipt-browser
-  gates.
+- [x] The authenticated live provider route is deployed at
+  `https://api.salad.ink/api/harness/provider/v1/chat/completions`; no-auth
+  requests return 401 instead of 404, and a real production-backed engineer
+  turn completed through the installed carrier. This is separate from normal
+  Salad Chat.
+- [x] Published `v0.2.12` with the patched carrier, all six terminal archives,
+  four macOS/Linux carrier archives, SHA256SUMS, and release-manifest.json.
+  The public installer was run in an isolated prefix; it installed version
+  0.2.12, signed the 198 MB arm64 carrier, and `salad harness doctor` passed.
+- [ ] Remaining preview gates are explicit: native Linux/Windows safety proof,
+  domain allowlist instead of per-run network approval, long-lived process UX,
+  reconnect/replay, and receipt-browser verification.
 
 ### Live provider promotion follow-up (2026-08-15)
 
@@ -406,9 +408,10 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   chat routing were intentionally excluded.
 - [x] SaladBE PR #106 passed the full backend test, vet, build, lint, and
   document-compiler checks and was merged to `main` as `b71fe3c`.
-- [ ] Verify the production deployment and run the installed CLI against the
-  live provider route. A route returning 401 without auth is expected; 404 is
-  not.
+- [x] Verified the production deployment and ran the installed CLI against the
+  live provider route. Readiness reported release `b71fe3c`; no-auth returned
+  401; the clean-installed `v0.2.12` binary/carrier returned the expected
+  project answer through production.
 - [x] Ran a real human-style engineer workflow against staging with the
   installed candidate carrier: read `AGENTS.md`, explain the failing test,
   wait for approval, edit only `main.go`, run `gofmt`, `go test ./...`,
@@ -418,3 +421,7 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Fixed the misleading fresh-run message found during that live workflow:
   the adapter now reports a restore fallback only when the user actually
   requested a saved-session resume.
+- [x] Reproduced and resolved the apparent macOS signing failure during the
+  clean install: the host disk was full from task-owned 198 MB carrier test
+  copies. After removing those temporary artifacts, the same public installer
+  and carrier passed signing and doctor verification.

@@ -180,9 +180,10 @@ Salad Terminal
 The previously published pinned ACP carrier exposed fresh sessions only, with
 no server-side resume/list/load. The current build contains a shape-checked
 source patch that exposes DSH's existing durable `ctx.agents.resume()` and
-session-close capabilities through ACP. A locally packaged macOS candidate has
-passed a two-process restore smoke and a mismatched-workspace negative test, but
-it has not yet been published in a Salad release. JSON-RPC can restore a
+session-close capabilities through ACP. A locally packaged macOS candidate
+passed a two-process restore smoke and a mismatched-workspace negative test,
+and the patched carrier is now published in Salad Terminal `v0.2.12`. JSON-RPC
+can restore a
 persisted DSH session when a developer supplies a compatible carrier, but that
 mode is not the default interactive path. The integration remains opt-in:
 normal Salad chat never launches this process and no DSH session becomes the
