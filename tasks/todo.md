@@ -232,3 +232,34 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   publicly installable. The frontend receipt PR remains open because its CI
   quality job has unrelated pre-existing ChatArea test drift; lifecycle replay
   after reconnect is not implemented yet.
+
+## Engineer-terminal standard audit (2026-08-15)
+
+- [x] Confirm the product boundary: normal Salad Chat remains unchanged; DSH
+  is an internal runtime for the one engineer-facing Salad Terminal.
+- [x] Drive a real DSH project workflow with the public v0.2.11 binary and
+  managed carrier: create files, run `npm run build`, and verify built output.
+- [x] Drive the installed normal terminal workspace-tool path separately in a
+  disposable project. File-edit approval rendered and applied correctly; the
+  run-command request later returned `TOOL_RESULT_UNKNOWN_REQUEST` during the
+  interactive test, so this path is not signed off as a reliable engineer loop.
+- [x] Measure packaging: terminal binary is about 15 MB installed; macOS
+  arm64 DSH carrier is about 198 MB installed and 53.8 MB compressed. The
+  first install downloads both unless `SALAD_SKIP_HARNESS=1` is set.
+- [x] Run DSH security negatives with the shipped carrier: absolute writes
+  outside the workspace were blocked; symlink writes to a home-directory path
+  outside the workspace were blocked. Platform temp roots are intentionally
+  writable and must be described as such.
+- [x] Read DeepSeek's source architecture. It has durable event-sourced
+  sessions, subagents, background jobs, workflows, sandbox policy, and replay
+  concepts. Salad's ACP adapter currently exposes fresh sessions only.
+- [x] Record the single-terminal architecture and release gate in
+  `docs/ENGINEER_TERMINAL_STANDARD.md`.
+- [ ] Replace the internal dual execution paths with one engineer-terminal
+  experience: one event model, one approval policy, one run record, and DSH as
+  the replaceable local runtime. Do not change normal Salad Chat.
+- [ ] Add true session restore, long-running process management, background
+  task controls, and reconnect/replay before calling the engineer terminal
+  production-ready.
+- [ ] Decide whether the DSH carrier is installed lazily or remains opt-out;
+  disclose the size and make the lightweight install path obvious.
