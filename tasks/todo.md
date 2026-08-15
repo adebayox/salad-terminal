@@ -365,3 +365,33 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   `session/resume` and `session/close` handlers plus a private ACP persistence
   root. This is not shipped or signed off until a compiled carrier survives
   two separate processes and rejects a mismatched workspace cwd.
+
+### Latest engineer-terminal verification (2026-08-15)
+
+- [x] Built a real 201 MB macOS x64 ACP carrier from pinned DSH source
+  `47f943859bef60e4160492346772ded9b24f765a`; checksum verification passed and
+  the managed install/doctor path reported the installed digest.
+- [x] Fixed a real fresh-session bug found by the first live CLI attempt: a
+  generated local session ID was being mistaken for a resume request. New ACP
+  runs now call `session/new`; only an explicitly supplied saved ID calls
+  `session/resume` or `session/load`.
+- [x] Ran the installed carrier through a disposable project with actual ACP
+  reads, edits, and `npm test` tool calls, then independently verified the
+  resulting files and test pass. Also verified the same-process interactive
+  two-turn flow and clean Ctrl-D shutdown.
+- [x] Restored a saved ACP session in a second process and recovered the
+  `SALAD-RESTORE-42` marker. A direct resume with a different workspace was
+  rejected with `-32602 Invalid params: session cwd does not match`.
+- [x] Confirmed normal chat remains outside the code path: only terminal
+  harness files changed in this checkout; no `internal/chat`, realtime, TUI,
+  SaladBE, or normal `salad say` files were modified.
+- [ ] The authenticated live provider smoke currently returns HTTP 404 from
+  `https://api.salad.ink/api/harness/provider/v1/chat/completions`. The route
+  exists in the dirty local SaladBE checkout but is not present on the live
+  API, so the patched carrier is not releasable through the Salad provider
+  until that additive engineer-only backend route is deployed and browser/API
+  verified. This is separate from normal Salad Chat.
+- [ ] Publish the patched carrier in a release, repeat clean-install and live
+  provider verification, then close the remaining Linux/Windows native safety,
+  domain-allowlist, long-lived process, reconnect/replay, and receipt-browser
+  gates.

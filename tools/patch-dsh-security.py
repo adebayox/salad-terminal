@@ -107,7 +107,7 @@ replace_once(
         if (params.additionalDirectories !== undefined && params.additionalDirectories.length > 0) {
           throw invalidParams('additionalDirectories is not supported')
         }
-        if (params.mcpServers.length > 0) throw invalidParams('mcpServers is not supported')
+        if (params.mcpServers !== undefined && params.mcpServers.length > 0) throw invalidParams('mcpServers is not supported')
         const sessionId = SessionId(params.sessionId)
         if (sessions.has(sessionId)) throw invalidParams(`session is already active: ${params.sessionId}`)
         const handle = await agents.resume({

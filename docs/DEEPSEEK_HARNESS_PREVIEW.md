@@ -111,9 +111,11 @@ salad harness resume <run-id> "Now run the focused test and explain the result"
 
 Salad records the actual ACP session ID returned by the carrier. When a future
 carrier advertises ACP `session/load` or `session/resume`, Salad uses that
-capability to restore the saved session. The pinned DeepSeek preview carrier
-currently does not advertise either capability, so Salad prints that it is
-starting a fresh continuation and includes the previous request explicitly.
+capability to restore the saved session. Older public preview carriers do not
+advertise either capability, so Salad prints that it is starting a fresh
+continuation with those carriers. The rebuilt candidate in this repository
+does advertise `session/resume` and restores the same workspace session across
+two processes.
 
 When DSH asks to do something outside its allowed workspace, Salad shows a
 clear `Allow once? [y/N]` question. The safe default is rejection. Press
@@ -121,8 +123,10 @@ Ctrl-C to cancel the local run.
 
 The ACP adapter is capability-aware: it only calls `session/load` or
 `session/resume` when the carrier advertises support, following the current
-ACP protocol. With the pinned DSH preview, `salad harness resume` remains a
-transparent Salad continuation because that carrier does not expose restore.
+ACP protocol. With an older DSH preview, `salad harness resume` remains a
+transparent Salad continuation. With the rebuilt candidate, it uses real ACP
+restore and refuses a resume request whose workspace path does not match the
+stored session.
 The explicit JSON-RPC mode is wired to reuse DSH's persisted session and stores
 its session files in Salad's private config directory, not in the repository.
 That restore path has now been verified across two separate invocations with a
@@ -168,14 +172,13 @@ Salad Terminal
        └─ session cancellation, then bounded kill fallback
 ```
 
-The published pinned ACP carrier currently exposes fresh sessions only, with
-no server-side resume/list/load. `salad harness resume` is transparent local
-continuation for that carrier, not a claim that ACP restored DSH history. The
-carrier build now contains a shape-checked source patch prepared to expose
-DSH's existing durable `ctx.agents.resume()` capability through stable ACP,
-but that patched carrier is not released or signed off until it passes a
-two-process smoke. JSON-RPC can restore a persisted DSH session when a
-developer supplies a compatible carrier, but that mode is not the default
-interactive path. The integration remains opt-in:
+The previously published pinned ACP carrier exposed fresh sessions only, with
+no server-side resume/list/load. The current build contains a shape-checked
+source patch that exposes DSH's existing durable `ctx.agents.resume()` and
+session-close capabilities through ACP. A locally packaged macOS candidate has
+passed a two-process restore smoke and a mismatched-workspace negative test, but
+it has not yet been published in a Salad release. JSON-RPC can restore a
+persisted DSH session when a developer supplies a compatible carrier, but that
+mode is not the default interactive path. The integration remains opt-in:
 normal Salad chat never launches this process and no DSH session becomes the
 Salad chat source of truth.

@@ -80,6 +80,7 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 	if opts.Model == "" {
 		opts.Model = firstNonEmpty(os.Getenv("SALAD_DSH_MODEL"), defaultModel)
 	}
+	resumeRequested := strings.TrimSpace(opts.SessionID) != ""
 	if opts.SessionID == "" {
 		id, err := newID()
 		if err != nil {
@@ -239,7 +240,7 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 
 	sessionID := ""
 	canResume := len(initialized.AgentCapabilities.SessionCapabilities.Resume) > 0 && string(initialized.AgentCapabilities.SessionCapabilities.Resume) != "null"
-	if opts.SessionID != "" && (initialized.AgentCapabilities.LoadSession || canResume) {
+	if resumeRequested && (initialized.AgentCapabilities.LoadSession || canResume) {
 		setSession(opts.SessionID)
 		method := "session/resume"
 		if initialized.AgentCapabilities.LoadSession {

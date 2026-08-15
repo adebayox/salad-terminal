@@ -81,6 +81,22 @@ func TestRunACPInteractiveKeepsOneSessionAcrossPrompts(t *testing.T) {
 	}
 }
 
+func TestRunACPStartsFreshWhenSessionIDWasNotRequested(t *testing.T) {
+	var output strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := RunACP(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPResume"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp-resume"}, Output: &output,
+	}, "Start new work")
+	if err != nil {
+		t.Fatalf("RunACP() error = %v", err)
+	}
+	if result.SessionID != "fresh-acp-session" || !strings.Contains(output.String(), "fresh response") {
+		t.Fatalf("session = %q output = %q", result.SessionID, output.String())
+	}
+}
+
 func TestRunCancellationReapsChild(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -252,10 +268,18 @@ func TestHarnessFakeACPResume(t *testing.T) {
 			}})
 		case "session/load":
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "result": map[string]any{}})
+		case "session/new":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "result": map[string]string{"sessionId": "fresh-acp-session"}})
 		case "session/prompt":
+			params, _ := frame["params"].(map[string]any)
+			sessionID, _ := params["sessionId"].(string)
+			response := "ACP resumed response"
+			if sessionID == "fresh-acp-session" {
+				response = "fresh response"
+			}
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
-				"sessionId": "saved-session", "update": map[string]any{
-					"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": "ACP resumed response"},
+				"sessionId": sessionID, "update": map[string]any{
+					"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": response},
 				},
 			}})
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "result": map[string]string{"stopReason": "end_turn"}})
