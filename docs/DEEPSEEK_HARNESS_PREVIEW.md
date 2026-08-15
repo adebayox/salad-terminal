@@ -111,10 +111,14 @@ Each engineer session receives a local run ID. Continue a previous run
 explicitly with:
 
 ```text
-salad harness resume <run-id> "Now run the focused test and explain the result"
+salad engineer runs
+salad engineer resume <run-id> "Now run the focused test and explain the result"
 ```
 
-Salad records the actual ACP session ID returned by the carrier. When a future
+The run list shows the saved workspace, status, timestamp, and ACP session ID.
+Salad records the actual ACP session ID returned by the carrier immediately,
+before the long model turn starts, so a crash does not erase the resume handle.
+When a future
 carrier advertises ACP `session/load` or `session/resume`, Salad uses that
 capability to restore the saved session. Older public preview carriers do not
 advertise either capability, so Salad prints that it is starting a fresh
@@ -152,6 +156,13 @@ as Salad's default carrier, so it remains a compatibility path rather than the
 default interactive approval path. The disposable smoke used the upstream
 JSON-RPC example composition; that composition is not itself the release
 security profile.
+
+The next carrier build also mounts DeepSeek's official persistent PTY and
+background-job plugins. That gives the model `terminal_open`, `terminal_read`,
+`terminal_signal`, `terminal_close`, plus `job_list`, `job_output`, and
+`job_kill` for dev servers and long-running tests. The published v0.2.12
+carrier predates that addition; it must be rebuilt and smoke-tested before
+these controls are advertised as available.
 
 ## Runtime packaging
 

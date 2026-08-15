@@ -425,3 +425,36 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   clean install: the host disk was full from task-owned 198 MB carrier test
   copies. After removing those temporary artifacts, the same public installer
   and carrier passed signing and doctor verification.
+
+### Final engineer-terminal audit (2026-08-15)
+
+- [x] Re-ran a real long-lived-process workflow with the public `v0.2.12`
+  install: started a Python server, verified it over HTTP from outside the
+  agent, followed up in the same session, resumed it in a second process, and
+  confirmed Ctrl-D cleaned up the child process group.
+- [x] Re-ran a model-controlled absolute read of `/Users/davidnifemi/.env`
+  with the public carrier; the carrier denied it. The test also exposed that
+  non-conventional names such as `.salad-home-read-sentinel.env` are not
+  covered by the current filename policy and must not be described as
+  protected merely because they end in `.env`.
+- [x] Add durable run status and immediate session-ID persistence so a crash
+  does not leave a run looking resumable without the actual ACP session.
+- [x] Make `salad engineer resume <run-id>` and saved-run inspection visible in
+  help and the normal engineer workflow.
+- [x] Integrate DeepSeek's official persistent PTY and background-job plugins
+  into the pinned carrier build. The v0.2.12 carrier predates this source
+  change; a new packaged carrier still needs to be built and exercised. The
+  shape-checked patch was run against a fixture containing every pinned source
+  seam and produced the expected `terminal_*`/`job_*` config entries.
+- [x] Ran a real collaboration prompt against the public carrier. The model
+  could delegate a subagent, but the v0.2.12 config gave the engineer no
+  observable job-list/output/kill control; the follow-up could not collect the
+  child result before cancellation. This is evidence for the PTY/job carrier
+  change, not a pass for the old package.
+- [ ] Decide and document the remaining process-control and replay boundary;
+  do not call a same-process child cleanup test a complete dev-server UX. The
+  source now has DSH's `terminal_*` and `job_*` controls; packaged proof is
+  still open.
+- [ ] Re-run the full requirement matrix after these changes, including
+  background work, cancellation, reconnect/resume, package install, security,
+  and normal-chat non-regression evidence.

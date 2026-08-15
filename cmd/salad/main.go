@@ -329,6 +329,12 @@ func runHarnessMode(args []string, interactive bool) error {
 	if interactive {
 		surface = "salad engineer"
 	}
+	if len(args) > 0 && args[0] == "runs" {
+		if len(args) != 1 {
+			return fmt.Errorf("usage: %s runs", surface)
+		}
+		return listHarnessRuns()
+	}
 	if len(args) == 0 && !interactive {
 		return fmt.Errorf("usage: salad harness [install|rollback|doctor|options] <prompt>")
 	}
@@ -459,6 +465,15 @@ func runHarnessMode(args []string, interactive bool) error {
 	if command == "" {
 		command = harness.InstalledCommand()
 	}
+	if strings.TrimSpace(os.Getenv("SALAD_DSH_COMMAND")) == "" && command == harness.InstalledCommand() {
+		_, _, _, installed, installErr := harness.InstallationStatus()
+		if installErr != nil {
+			return fmt.Errorf("the managed Salad Harness install is invalid; run `salad harness doctor`: %w", installErr)
+		}
+		if !installed {
+			return errors.New("engineer mode is not installed on this platform; install the macOS/Linux Salad Terminal package with its Harness carrier, or pass --command for a development runtime")
+		}
+	}
 	opts := harness.Options{
 		Command: command, Provider: provider, Model: model, SessionID: sessionID, Cwd: root,
 		Input: input, InputCloser: os.Stdin, Output: os.Stdout,
@@ -530,9 +545,21 @@ func runHarnessMode(args []string, interactive bool) error {
 	if recordPrompt == "" {
 		recordPrompt = "(interactive engineer session)"
 	}
-	runRecord := harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: recordPrompt, StartedAt: time.Now().UTC(), ResumeOf: resumeOf}
+	now := time.Now().UTC()
+	runRecord := harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: recordPrompt, StartedAt: now, UpdatedAt: now, Status: "starting", ResumeOf: resumeOf}
 	if err := harness.SaveRun(runRecord); err != nil {
 		return fmt.Errorf("save harness run record: %w", err)
+	}
+	opts.OnSessionID = func(actual string) {
+		if strings.TrimSpace(actual) == "" {
+			return
+		}
+		runRecord.SessionID = actual
+		runRecord.Status = "running"
+		runRecord.UpdatedAt = time.Now().UTC()
+		if saveErr := harness.SaveRun(runRecord); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "[harness] could not save the active session id: %v\n", saveErr)
+		}
 	}
 	if chatID == "" {
 		chatID = strings.TrimSpace(os.Getenv("SALAD_HARNESS_CHAT_ID"))
@@ -556,9 +583,6 @@ func runHarnessMode(args []string, interactive bool) error {
 	}
 	if result.SessionID != "" && result.SessionID != runRecord.SessionID {
 		runRecord.SessionID = result.SessionID
-		if saveErr := harness.SaveRun(runRecord); saveErr != nil {
-			fmt.Fprintf(os.Stderr, "[harness] could not save the actual session id: %v\n", saveErr)
-		}
 	}
 	status, summary := "completed", "Harness run completed"
 	if err != nil {
@@ -569,8 +593,56 @@ func runHarnessMode(args []string, interactive bool) error {
 			summary = "Harness run cancelled"
 		}
 	}
+	runRecord.Status = status
+	runRecord.UpdatedAt = time.Now().UTC()
+	runRecord.FinishedAt = runRecord.UpdatedAt
+	runRecord.LastError = ""
+	if err != nil {
+		runRecord.LastError = err.Error()
+	}
+	if saveErr := harness.SaveRun(runRecord); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "[harness] could not save final run state: %v\n", saveErr)
+	}
 	postHarnessEventWithSequence(context.Background(), providerClient, chatID, runID, workspaceID, status, summary, 3)
 	return err
+}
+
+func listHarnessRuns() error {
+	root, err := workspace.ResolveRoot("")
+	if err != nil {
+		return err
+	}
+	runs, err := harness.ListRuns()
+	if err != nil {
+		return err
+	}
+	found := 0
+	fmt.Printf("Saved Salad engineer runs for %s\n", root)
+	for _, record := range runs {
+		if record.Workspace != root {
+			continue
+		}
+		status := record.Status
+		if status == "" {
+			status = "unknown"
+		}
+		updated := record.UpdatedAt
+		if updated.IsZero() {
+			updated = record.StartedAt
+		}
+		session := record.SessionID
+		if session == "" {
+			session = "-"
+		}
+		fmt.Printf("  %-34s %-10s %-24s session=%s\n", record.ID, status, updated.Local().Format("2006-01-02 15:04:05"), session)
+		found++
+	}
+	if found == 0 {
+		fmt.Println("  No saved runs for this workspace.")
+		return nil
+	}
+	fmt.Println("Resume with: salad engineer resume <run-id>")
+	return nil
 }
 
 func environmentValue(values []string, name string) bool {
@@ -923,7 +995,7 @@ Open a chat by ID. Without an ID, choose from previous chats.
 		fmt.Println("Usage: salad logout")
 		fmt.Println("Sign out on this computer and remove local Salad Terminal credentials.")
 	case "harness":
-		fmt.Print(`Usage: salad harness [install|rollback|doctor|options] <prompt>
+		fmt.Print(`Usage: salad harness [install|rollback|doctor|runs|options] <prompt>
 
 Run a DeepSeek Harness session in the trusted current workspace. Install a
 runtime is installed automatically by the macOS/Linux release installer.
@@ -933,6 +1005,7 @@ or change your normal Salad chat. "salad harness doctor" checks the setup.
 
   install --runtime <path> [--config <path>] [--force]
   rollback                 Restore the previous managed runtime
+  runs                     List saved runs for this workspace
   resume <run-id> <prompt>  Continue from a saved local run record
 
   --command <path>        DSH ACP executable (or SALAD_DSH_COMMAND)
@@ -947,6 +1020,8 @@ or change your normal Salad chat. "salad harness doctor" checks the setup.
 `)
 	case "engineer":
 		fmt.Print(`Usage: salad engineer [prompt]
+       salad engineer resume <run-id> [prompt]
+       salad engineer runs
 
 Work with an agent in the trusted current workspace. With no prompt, Salad
 keeps one session open so you can inspect, edit, test, and follow up without
@@ -957,6 +1032,9 @@ The normal Salad chat is a separate product path and is not used by this
 command. Network access is denied by default. To request it for this run:
 
   salad engineer --network allow
+
+Use "salad engineer runs" to see saved local sessions for this workspace,
+then "salad engineer resume <run-id>" to continue one later.
 `)
 	case "doctor":
 		fmt.Println("Usage: salad doctor")

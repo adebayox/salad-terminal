@@ -98,12 +98,12 @@ The terminal reaches flow state only when the following are reliable:
 | Read/search/project instructions | Present in the existing path; DSH has workspace context | Same rules are visible to whichever runtime runs |
 | File edits and reviewable diffs | Present in the existing path; DSH has native file tools | One diff/approval experience, including reject and retry |
 | Build, test, lint, and git inspection | Present but command path is bounded and 60 seconds | Long commands, output limits, cancellation, and clear evidence |
-| Interactive processes and dev servers | Carrier cancellation now kills the full Unix process group; a complete start/view/restart UX is not proven | Start, view logs, stop, restart, and clean up |
+| Interactive processes and dev servers | v0.2.12 proved process-group cleanup, but its config exposed only one-shot bash | The next carrier now mounts DSH's official persistent PTY and job plugins; packaged start/read/stop/restart smoke is still required |
 | Git branch/commit/PR workflow | Read-only inspection is present | Writes are explicit, reviewable, and recoverable |
 | Approval policy | Present in both paths, with different semantics | One policy model; low-risk auto-run, high-risk review |
 | Session resume | One `salad engineer` session accepts multiple prompts in one ACP process. The rebuilt macOS carrier advertises ACP resume/close, restores across two processes, and rejects a mismatched workspace. Older carriers use the explicit fresh-continuation fallback | Linux/Windows native proof and reconnect/replay remain open |
-| Background work/subagents | DSH config contains plugins; terminal UX is not proven | List, inspect, interrupt, and receive completion reliably |
-| Reconnect and replay | Receipt events exist; local DSH run record is thin | No silent stall after disconnect; replay is deterministic |
+| Background work/subagents | Subagents are configured; persistent job controls were not mounted in v0.2.12 | The next carrier mounts DSH's `jobs` registry and `job_list`/`job_output`/`job_kill`; packaged completion and cancellation smoke is still required |
+| Reconnect and replay | DSH persists an append-only session log and the CLI now persists run status/session ID; terminal output is not replayed by Salad itself | Resume must restore the model session, show the saved run state, and document that live output is re-rendered rather than replayed |
 | Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; confined shell network is deny-by-default there | Prove the same boundary on Linux and Windows; add an explicit allowlisted network approval flow |
 | Installation and update | Checksums, rollback, and managed carrier exist | Size is disclosed; update is atomic and rollback-tested |
 | Cross-platform behavior | Archives build; DSH carrier is not on Windows | Product capability is explicit per platform, not surprising |
@@ -128,6 +128,9 @@ installed: the normal terminal binary is about 15 MB uncompressed, while the
 macOS arm64 DSH carrier is about 198 MB uncompressed and 53.8 MB compressed.
 That is acceptable for a preview only if the installer says so and offers a
 clear way to install the lightweight terminal without the carrier.
+v0.2.12 remains the previously published preview; the source build now adds
+DSH's official persistent PTY and background-job plugins, which must be rebuilt
+and published before those controls can be promised to users.
 
 ## Non-negotiable safety boundary
 
@@ -138,3 +141,21 @@ sanitized lifecycle updates, but it must not become the execution transport.
 Before calling the unified terminal shippable, run the complete matrix against
 a disposable repository and separately confirm that a normal Salad Chat still
 answers normally afterward.
+
+## Research basis
+
+This decision follows the current upstream documentation, not only the launch
+post:
+
+- [DeepSeek Harness architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)
+  defines durable session events, persistent terminals, and background jobs as
+  separate plugin capabilities. Salad should use those capabilities rather
+  than recreate them in Go.
+- [DeepSeek's README](https://github.com/deepseek-ai/deepseek-harness) calls
+  the project a developer preview and warns that compatibility-breaking
+  changes are expected. That is why the carrier is pinned, checksummed, and
+  treated as replaceable.
+- [Claude session documentation](https://code.claude.com/docs/en/sessions) and
+  [Codex CLI guidance](https://help.openai.com/en/articles/11096431) both make
+  resume and explicit approval/sandbox choices visible to the developer. The
+  same ideas belong in Salad Terminal's user-facing commands.

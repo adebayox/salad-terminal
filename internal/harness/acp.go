@@ -241,7 +241,6 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 	sessionID := ""
 	canResume := len(initialized.AgentCapabilities.SessionCapabilities.Resume) > 0 && string(initialized.AgentCapabilities.SessionCapabilities.Resume) != "null"
 	if resumeRequested && (initialized.AgentCapabilities.LoadSession || canResume) {
-		setSession(opts.SessionID)
 		method := "session/resume"
 		if initialized.AgentCapabilities.LoadSession {
 			method = "session/load"
@@ -271,6 +270,9 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 		sessionID = session.SessionID
 	}
 	setSession(sessionID)
+	if opts.OnSessionID != nil {
+		opts.OnSessionID(sessionID)
+	}
 
 	promptOnce := func(id, text string) error {
 		if err := writeFrame(map[string]any{

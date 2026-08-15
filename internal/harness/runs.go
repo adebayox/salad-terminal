@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,15 +16,19 @@ import (
 )
 
 type RunRecord struct {
-	ID        string    `json:"id"`
-	Workspace string    `json:"workspace"`
-	Protocol  string    `json:"protocol"`
-	SessionID string    `json:"session_id,omitempty"`
-	Command   string    `json:"command,omitempty"`
-	Config    string    `json:"config,omitempty"`
-	Prompt    string    `json:"prompt"`
-	StartedAt time.Time `json:"started_at"`
-	ResumeOf  string    `json:"resume_of,omitempty"`
+	ID         string    `json:"id"`
+	Workspace  string    `json:"workspace"`
+	Protocol   string    `json:"protocol"`
+	SessionID  string    `json:"session_id,omitempty"`
+	Command    string    `json:"command,omitempty"`
+	Config     string    `json:"config,omitempty"`
+	Prompt     string    `json:"prompt"`
+	StartedAt  time.Time `json:"started_at"`
+	ResumeOf   string    `json:"resume_of,omitempty"`
+	Status     string    `json:"status,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at,omitempty"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+	LastError  string    `json:"last_error,omitempty"`
 }
 
 func SaveRun(record RunRecord) error {
@@ -65,6 +70,53 @@ func LoadRun(id string) (RunRecord, error) {
 		return RunRecord{}, errors.New("harness run record is invalid")
 	}
 	return record, nil
+}
+
+// ListRuns returns saved local run records, newest first. A corrupt record is
+// reported instead of silently disappearing; a missing or damaged record can
+// affect whether a developer resumes the right workspace.
+func ListRuns() ([]RunRecord, error) {
+	dir, err := runDirectory()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []RunRecord{}, nil
+		}
+		return nil, fmt.Errorf("list harness runs: %w", err)
+	}
+	runs := make([]RunRecord, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if readErr != nil {
+			return nil, fmt.Errorf("read harness run %q: %w", entry.Name(), readErr)
+		}
+		var record RunRecord
+		if decodeErr := json.Unmarshal(data, &record); decodeErr != nil {
+			return nil, fmt.Errorf("decode harness run %q: %w", entry.Name(), decodeErr)
+		}
+		if safeRunID(record.ID) == "" || record.Workspace == "" || record.Prompt == "" {
+			return nil, fmt.Errorf("harness run %q is invalid", entry.Name())
+		}
+		runs = append(runs, record)
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		left := runs[i].UpdatedAt
+		if left.IsZero() {
+			left = runs[i].StartedAt
+		}
+		right := runs[j].UpdatedAt
+		if right.IsZero() {
+			right = runs[j].StartedAt
+		}
+		return left.After(right)
+	})
+	return runs, nil
 }
 
 func runDirectory() (string, error) {

@@ -48,16 +48,18 @@ func TestRunACPWithFakeRuntimeUsesNumericIDsAndRejectsApproval(t *testing.T) {
 
 func TestRunACPUsesAdvertisedSessionRestore(t *testing.T) {
 	var output strings.Builder
+	var callbackSession string
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	result, err := RunACP(ctx, Options{
 		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPResume"}, Cwd: t.TempDir(), SessionID: "saved-session",
 		Env: []string{"SALAD_DSH_TEST_HELPER=acp-resume"}, Input: strings.NewReader(""), Output: &output,
+		OnSessionID: func(id string) { callbackSession = id },
 	}, "Continue the work")
 	if err != nil {
 		t.Fatalf("RunACP() error = %v", err)
 	}
-	if result.SessionID != "saved-session" || !strings.Contains(output.String(), "ACP resumed response") {
+	if result.SessionID != "saved-session" || callbackSession != result.SessionID || !strings.Contains(output.String(), "ACP resumed response") {
 		t.Fatalf("session = %q output = %q", result.SessionID, output.String())
 	}
 }
@@ -83,16 +85,18 @@ func TestRunACPInteractiveKeepsOneSessionAcrossPrompts(t *testing.T) {
 
 func TestRunACPStartsFreshWhenSessionIDWasNotRequested(t *testing.T) {
 	var output strings.Builder
+	var callbackSession string
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	result, err := RunACP(ctx, Options{
 		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPResume"}, Cwd: t.TempDir(),
 		Env: []string{"SALAD_DSH_TEST_HELPER=acp-resume"}, Output: &output,
+		OnSessionID: func(id string) { callbackSession = id },
 	}, "Start new work")
 	if err != nil {
 		t.Fatalf("RunACP() error = %v", err)
 	}
-	if result.SessionID != "fresh-acp-session" || !strings.Contains(output.String(), "fresh response") {
+	if result.SessionID != "fresh-acp-session" || callbackSession != result.SessionID || !strings.Contains(output.String(), "fresh response") {
 		t.Fatalf("session = %q output = %q", result.SessionID, output.String())
 	}
 	if strings.Contains(output.String(), "carrier does not advertise session restore") {
