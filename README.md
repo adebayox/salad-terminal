@@ -18,7 +18,7 @@ system and CPU. It checks the SHA-256 checksum before it installs the binary.
 To install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.5 bash
+curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.11 bash
 ```
 
 ### Windows
@@ -32,6 +32,24 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 The installer checks the SHA-256 checksum and puts `salad.exe` in
 `%LOCALAPPDATA%\Salad\bin`.
+
+## Engineer mode
+
+The opt-in `salad harness` command runs the DeepSeek Harness in the trusted
+repository you choose. It is separate from the normal Salad chat commands and
+does not send prompts or tool calls through normal chat routing:
+
+```bash
+cd your-repository
+salad workspace trust
+salad harness "Inspect the project, run the tests, and explain what you found"
+```
+
+On macOS and Linux, the installer also downloads the harness carrier: about
+54 MB compressed and about 198 MB installed in the current preview. Use
+`SALAD_SKIP_HARNESS=1` when you only want the lightweight chat terminal. The
+Windows installer currently installs the normal terminal only; `salad harness
+doctor` reports that the carrier is unavailable instead of silently failing.
 
 ## Start
 
