@@ -104,6 +104,19 @@ func TestRunACPStartsFreshWhenSessionIDWasNotRequested(t *testing.T) {
 	}
 }
 
+func TestRunACPPromptTimeoutCancelsStalledTurn(t *testing.T) {
+	var output strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := RunACP(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPTimeout"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp-timeout"}, Output: &output, PromptTimeout: 50 * time.Millisecond,
+	}, "This turn must time out")
+	if err == nil || !strings.Contains(err.Error(), "ACP prompt timed out") {
+		t.Fatalf("RunACP() error = %v, output = %q", err, output.String())
+	}
+}
+
 func TestRunCancellationReapsChild(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -299,6 +312,32 @@ func TestHarnessFakeACPResume(t *testing.T) {
 			}})
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "result": map[string]string{"stopReason": "end_turn"}})
 			return
+		}
+	}
+}
+
+func TestHarnessFakeACPTimeout(t *testing.T) {
+	if os.Getenv("SALAD_DSH_TEST_HELPER") != "acp-timeout" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	for scanner.Scan() {
+		var frame map[string]any
+		if json.Unmarshal(scanner.Bytes(), &frame) != nil {
+			continue
+		}
+		method, _ := frame["method"].(string)
+		id := frame["id"]
+		switch method {
+		case "initialize":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"protocolVersion": 1}})
+		case "session/new":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]string{"sessionId": "timeout-acp-session"}})
+		case "session/prompt":
+			for {
+				time.Sleep(time.Hour)
+			}
 		}
 	}
 }

@@ -615,3 +615,56 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   carrier builder currently supports Linux/macOS only, so Windows engineer
   mode still needs an explicit product/runtime decision rather than a
   misleading partial install.
+### v0.2.17 public-release engineer proof (2026-08-15)
+
+- [x] Merged the engineer-only carrier safeguards in PR #14 and published
+  `v0.2.17` from the merged main commit. Release workflow `31903646186`
+  passed terminal tests, six terminal archives, four macOS/Linux carrier
+  archives, native Linux x64/ARM64 sandbox smoke, the Windows terminal
+  boundary smoke, and immutable release publication.
+- [x] Installed `v0.2.17` through the public release installer with
+  `SALAD_FORCE_REMOTE=1`; the installed binary reported `salad 0.2.17`, the
+  managed carrier passed `harness doctor`, and the installed carrier hash was
+  `71aaeac3eafa88696768fa40a489fafb8052e3a5bbb03f4284f3eb7963c9a941`.
+- [x] Ran the published bytes in the disposable Node workspace: the model
+  read `AGENTS.md`, made a small test improvement, ran `npm test` with one
+  passing test, started `env PORT=4325 npm run start` in a persistent
+  terminal, verified `/health` with an external curl, surfaced a read-only
+  reviewer result, and left no listener on port 4325.
+- [x] Verified public-release cancellation with a Python server on port 4326:
+  external `lsof` and curl observed it while the run was active; interrupting
+  Salad made the saved run `cancelled` and the port closed without manual
+  process cleanup.
+- [x] Verified public-release resume creates a new run and restores the prior
+  conversation's test/reviewer/server-cleanup context. It intentionally does
+  not claim that an old OS process or PTY survives carrier shutdown.
+- [ ] Remaining stronger-release gates are unchanged: native Windows DSH
+  carrier/runtime, domain-scoped network allowlisting, package provenance and
+  rollback hardening, and fuller replay/reconnect semantics. `v0.2.17` is an
+  engineer preview for macOS/Linux, not universal Windows engineer support.
+
+### Empty-workspace reality check (2026-08-15 continuation)
+
+- [x] Used the public `v0.2.17` CLI in a new empty trusted Git workspace. It
+  created a dependency-free task-board app, produced a `dist/` build artifact,
+  ran tests, and served the page on a persistent terminal. Independent curl
+  and lsof checks confirmed `/health`, the page marker, and process cleanup.
+- [x] Found and corrected real generated-project defects instead of accepting
+  the model's summary: the first `start` script only echoed text; the first
+  test cleanup used the wrong server object; the first accessibility repair
+  duplicated HTML blocks; and the first test only checked substring presence.
+  Exact independent counts and the final build/test then passed.
+- [x] Found a second real safety defect in the generated app: the default
+  server bound wildcard IPv6 and encoded traversal returned HTTP 500. The
+  engineer session entered a repeated repair loop and corrupted the disposable
+  `server.js`/`test.js` files with NUL bytes and duplicated blocks before it was
+  cancelled. This is a harness/model-workflow failure, not a release pass.
+- [x] Added a bounded ACP prompt timeout (default 10 minutes, override with
+  `SALAD_ENGINEER_PROMPT_TIMEOUT`) and a regression test proving a stalled
+  carrier turn is cancelled and reaped. Added explicit persona guidance to
+  report reviewer/tool failure and stop repeated repair attempts.
+- [ ] Do not claim the collaboration lane is signed off yet. The requested
+  public and rebuilt-candidate reviewer prompts hit provider HTTP 502s, and
+  the model previously claimed reviewer approval without a returned finding.
+  Re-test the bounded reviewer lane when the provider route is healthy, then
+  publish the fix only after an actual returned read-only review is observed.
