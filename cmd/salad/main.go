@@ -577,9 +577,11 @@ func runHarnessDoctor() error {
 	fmt.Println("Salad Harness doctor")
 	fmt.Printf("protocol: %s\n", protocol)
 	fmt.Printf("command: %s\n", command)
+	executableAvailable := true
 	if resolved, err := exec.LookPath(command); err == nil {
 		fmt.Printf("executable: %s\n", resolved)
 	} else {
+		executableAvailable = false
 		fmt.Printf("executable: missing (%s)\n", err)
 	}
 	if runtimePath, installedConfig, digest, installed, err := harness.InstallationStatus(); err == nil {
@@ -601,6 +603,9 @@ func runHarnessDoctor() error {
 		fmt.Printf("config: missing (%s)\n", err)
 	} else {
 		fmt.Printf("config: %s (%s)\n", configPath, info.Mode().Type())
+	}
+	if !executableAvailable {
+		return fmt.Errorf("Salad Harness executable is unavailable; install a platform carrier or set SALAD_DSH_COMMAND")
 	}
 	return nil
 }
