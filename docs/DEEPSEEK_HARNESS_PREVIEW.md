@@ -50,6 +50,13 @@ salad harness --salad-provider openai \
 Developers who intentionally use a direct DeepSeek key can use the escape
 hatch `DEEPSEEK_API_KEY=...`; Salad never stores or forwards that key.
 
+The managed carrier protects common credential-shaped files from the model,
+including `.env*`, `.ssh`, `.aws`, private keys, and package credential files.
+Confined shell commands start with network disabled. For a trusted operation
+that genuinely needs network access, a developer may explicitly set
+`DSH_NETWORK_MODE=allow`; this is an escape hatch for the preview, not the
+final approval experience.
+
 Before starting, check the local setup without touching the project:
 
 ```text
@@ -89,14 +96,20 @@ clear `Allow once? [y/N]` question. The safe default is rejection. Press
 Ctrl-C to cancel the local run.
 
 The ACP preview starts a fresh DSH session for each invocation. DeepSeek's ACP
-bridge does not yet expose resume/list/load, so `salad harness resume` is a
-Salad continuation rather than a DSH session restore. The old SDK JSON-RPC
-mode is available only as an explicit compatibility option:
+bridge does not yet expose resume/list/load, so ACP `salad harness resume` is a
+Salad continuation rather than a DSH session restore. The explicit JSON-RPC
+mode is wired to reuse DSH's persisted session and stores its session files in
+Salad's private config directory, not in the repository. A two-invocation
+packaged-carrier smoke is still required before this is release evidence:
 
 ```text
 salad harness --protocol jsonrpc --command /path/to/dsh-jsonrpc-agent \
-  --session salad-your-session-id "Continue from the previous run"
+  "Inspect the failing test"
+salad harness resume <run-id> "Now fix it and rerun the test"
 ```
+
+The JSON-RPC runtime still has no per-prompt cancel method, so this remains a
+compatibility path rather than the default interactive approval path.
 
 ## Runtime packaging
 

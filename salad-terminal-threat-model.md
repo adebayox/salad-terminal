@@ -30,36 +30,40 @@ changed.
 
 ## Findings
 
-### [P1] DSH can read `.env` and the carrier permits network activity
+### [P1] DSH secret/network policy needs cross-platform release proof
 
 - Location: the shipped `cordis.yml` mounts DSH filesystem tools without
   Salad's `.saladignore` rules; the DSH sandbox profile is file-write focused.
-- Evidence: with a disposable `.env` containing only a sentinel, a fake model
-  issued the real DSH `read` tool call for `.env`; the sentinel appeared in the
-  next model request. The pinned macOS Seatbelt profile uses `(allow default)`
-  and adds write restrictions, rather than a default-deny network/read policy.
+- Initial evidence: with a disposable `.env` containing only a sentinel, the
+  unmodified v0.2.11 carrier allowed the real DSH `read` tool to return it to
+  the next model request. The pinned Seatbelt profile used `(allow default)`
+  and added write restrictions, rather than a default-deny network/read policy.
+- Current macOS evidence: the rebuilt carrier denies the same real `read` call,
+  denies a real shell network probe, and still permits a normal workspace
+  write. The provider bridge continues to work because it remains in the
+  parent-owned path rather than the confined shell.
 - Impact: a malicious project instruction or dependency output could persuade
   the model to read a secret and send it to a remote endpoint. The Salad
   provider bridge protects the Salad token, but it does not protect project
   secrets that DSH can read.
-- Required fix: add an enforced secret-read deny layer to the DSH filesystem
-  composition, including `.env*`, private keys, credential files, and the
-  Salad config directory; make network access default-deny with explicit
-  per-session approval/allowlisting. Verify with sentinel read and exfiltration
-  negatives on macOS and Linux.
-- Release decision: do not call the harness production-ready until fixed.
+- Required follow-up: reproduce the same enforced boundary on Linux and
+  Windows, add explicit per-session network approval/allowlisting, and test
+  subagents and persistent terminals against it. `DSH_NETWORK_MODE=allow`
+  remains a deliberate escape hatch and is not a release-safe default.
+- Release decision: the original macOS P1 is fixed in the rebuilt carrier;
+  the cross-platform release gate remains open.
 
 ### [P1] “Resume” is not true session restore
 
 - Location: Salad's ACP adapter starts `initialize`, `session/new`, and one
-  `session/prompt` for every invocation. `salad harness resume` carries the old
-  prompt into a new session; the local run record does not contain the DSH
-  event log.
+  `session/prompt` for every invocation. The explicit JSON-RPC path now stores
+  a DSH session identity and private session root, but the default interactive
+  ACP path still starts fresh.
 - Impact: an engineer can resume the files but lose the actual agent history,
   approvals, tool evidence, and goals. This breaks long-running work and makes
   recovery after closing a terminal unreliable.
-- Required fix: keep a DSH session alive for the interactive terminal and add
-  durable session list/load/resume or a verified event-log replay adapter.
+- Required follow-up: move the interactive path to a protocol with durable
+  session restore, or add a verified Salad-owned replay adapter over ACP.
 
 ### [P1] The existing terminal chat tool path can outlive its server request
 
@@ -106,6 +110,9 @@ changed.
   managed rollback is limited to Salad-owned files.
 - Harness lifecycle receipts use a protected event endpoint and do not enter
   normal Salad Chat message processing.
+- The rebuilt macOS carrier denies model-controlled reads/writes of
+  credential-shaped files and denies network from confined shell commands by
+  default; this was verified with a real DSH ACP run, not a mock executor.
 
 ## Residual assumptions to validate before signoff
 

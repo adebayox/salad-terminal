@@ -75,7 +75,7 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 
 	cmd := exec.Command(opts.Command, opts.Args...)
 	cmd.Dir = opts.Cwd
-	cmd.Env = scrubbedEnvironment(append(opts.Env, "DSH_CWD="+opts.Cwd))
+	cmd.Env = scrubbedEnvironment(withHarnessSafetyDefaults(opts.Env, opts.Cwd))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return Result{}, fmt.Errorf("start harness stdin: %w", err)

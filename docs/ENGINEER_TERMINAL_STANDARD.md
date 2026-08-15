@@ -94,10 +94,10 @@ The terminal reaches flow state only when the following are reliable:
 | Interactive processes and dev servers | Not proven as a complete workflow | Start, view logs, stop, restart, and clean up |
 | Git branch/commit/PR workflow | Read-only inspection is present | Writes are explicit, reviewable, and recoverable |
 | Approval policy | Present in both paths, with different semantics | One policy model; low-risk auto-run, high-risk review |
-| Session resume | Terminal chat resumes Salad history; DSH wrapper starts fresh ACP sessions | Resume restores the actual agent history, not only the prompt |
+| Session resume | Terminal chat resumes Salad history; ACP starts fresh, while explicit JSON-RPC runs now reuse private persisted DSH sessions | The default interactive path must restore actual agent history, not only the prompt |
 | Background work/subagents | DSH config contains plugins; terminal UX is not proven | List, inspect, interrupt, and receive completion reliably |
 | Reconnect and replay | Receipt events exist; local DSH run record is thin | No silent stall after disconnect; replay is deterministic |
-| Secret and network safety | Scrubbing and workspace policy exist | OS sandbox, network default-deny/allowlist, symlink tests |
+| Secret and network safety | Credential-shaped reads are denied by the rebuilt macOS carrier; confined shell network is deny-by-default there | Prove the same boundary on Linux and Windows; add an explicit allowlisted network approval flow |
 | Installation and update | Checksums, rollback, and managed carrier exist | Size is disclosed; update is atomic and rollback-tested |
 | Cross-platform behavior | Archives build; DSH carrier is not on Windows | Product capability is explicit per platform, not surprising |
 | Evidence and observability | Basic run receipts and command output exist | Every claim links to command/test/file evidence |
@@ -107,6 +107,13 @@ The terminal reaches flow state only when the following are reliable:
 The DSH integration is a developer preview until the session, sandbox,
 interactive-process, and update gates above pass. It is not enough that a
 single prompt can create a project.
+
+The rebuilt macOS carrier now denies model-controlled reads and writes of
+credential-shaped files such as `.env*`, `.ssh`, `.aws`, private-key files,
+and package credential files. Its confined shell commands also start with no
+network. `DSH_NETWORK_MODE=allow` is an explicit developer escape hatch for
+network-dependent work; it is not the production default and must eventually
+be replaced by a visible, allowlisted approval in the terminal.
 
 The current v0.2.11 package is also materially heavier when the DSH carrier is
 installed: the normal terminal binary is about 15 MB uncompressed, while the

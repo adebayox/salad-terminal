@@ -346,7 +346,11 @@ func runHarness(args []string) error {
 		if record.Config != "" {
 			args = append([]string{"--config", record.Config}, args...)
 		}
-		args = append([]string{"Continue the previous Salad Harness run. Previous request: " + record.Prompt + ". New request:"}, args...)
+		if record.Protocol == "jsonrpc" && record.SessionID != "" {
+			args = append([]string{"--session", record.SessionID}, args...)
+		} else {
+			args = append([]string{"Continue the previous Salad Harness run. Previous request: " + record.Prompt + ". New request:"}, args...)
+		}
 	}
 	if args[0] == "doctor" {
 		if len(args) != 1 {
@@ -442,8 +446,21 @@ func runHarness(args []string) error {
 	}
 	workspaceID, _ := workspace.OpaqueID(root)
 	runID := fmt.Sprintf("salad-harness-%d", time.Now().UnixNano())
+	if protocol == "jsonrpc" && sessionID == "" {
+		sessionID = "salad-" + runID
+	}
+	if protocol == "jsonrpc" {
+		sessionRoot, sessionErr := harness.EnsureSessionRoot(root)
+		if sessionErr != nil {
+			return sessionErr
+		}
+		if !environmentValue(opts.Env, "DSH_SESSION_ROOT") && strings.TrimSpace(os.Getenv("DSH_SESSION_ROOT")) == "" {
+			opts.Env = append(opts.Env, "DSH_SESSION_ROOT="+sessionRoot)
+		}
+	}
+	opts.SessionID = sessionID
 	fmt.Printf("[harness] run id: %s\n", runID)
-	if err := harness.SaveRun(harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, Command: command, Config: configPath, Prompt: strings.Join(prompt, " "), StartedAt: time.Now().UTC(), ResumeOf: resumeOf}); err != nil {
+	if err := harness.SaveRun(harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: strings.Join(prompt, " "), StartedAt: time.Now().UTC(), ResumeOf: resumeOf}); err != nil {
 		return fmt.Errorf("save harness run record: %w", err)
 	}
 	if chatID == "" {
@@ -474,6 +491,15 @@ func runHarness(args []string) error {
 	}
 	postHarnessEventWithSequence(context.Background(), providerClient, chatID, runID, workspaceID, status, summary, 3)
 	return err
+}
+
+func environmentValue(values []string, name string) bool {
+	for _, value := range values {
+		if key, _, ok := strings.Cut(value, "="); ok && key == name {
+			return true
+		}
+	}
+	return false
 }
 
 func postHarnessEvent(ctx context.Context, client *api.Client, chatID, runID, workspaceID, status, summary string) {
@@ -823,7 +849,7 @@ or change your normal Salad chat. "salad harness doctor" checks the setup.
   --provider <name>       DSH provider (or SALAD_DSH_PROVIDER)
   --model <name>          DSH model (or SALAD_DSH_MODEL)
   --salad-provider <name> Salad provider for the authenticated local bridge
-  --session <id>          JSON-RPC compatibility mode only
+  --session <id>          Reuse a JSON-RPC session across runs
   --chat <id>             Share run start/finish with this Salad chat
 `)
 	case "doctor":

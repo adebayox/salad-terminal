@@ -117,7 +117,7 @@ func Run(ctx context.Context, opts Options, prompt string) (Result, error) {
 	}
 
 	cmd := exec.Command(opts.Command, opts.Args...)
-	cmd.Dir, cmd.Env = opts.Cwd, scrubbedEnvironment(opts.Env)
+	cmd.Dir, cmd.Env = opts.Cwd, scrubbedEnvironment(withHarnessSafetyDefaults(opts.Env, opts.Cwd))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return Result{}, fmt.Errorf("start harness stdin: %w", err)
@@ -350,6 +350,30 @@ func scrubbedEnvironment(overlay []string) []string {
 	}
 	return out
 }
+
+// withHarnessSafetyDefaults keeps model-controlled shell commands inside the
+// terminal's safer default. An explicit DSH_NETWORK_MODE=allow remains a
+// deliberate developer escape hatch for commands such as package installs;
+// the carrier still protects credential-shaped filesystem reads.
+func withHarnessSafetyDefaults(overlay []string, cwd string) []string {
+	values := append(append([]string{}, os.Environ()...), overlay...)
+	has := func(name string) bool {
+		for _, entry := range values {
+			if key, _, ok := strings.Cut(entry, "="); ok && key == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("DSH_NETWORK_MODE") {
+		values = append(values, "DSH_NETWORK_MODE=deny")
+	}
+	if !has("DSH_CWD") && strings.TrimSpace(cwd) != "" {
+		values = append(values, "DSH_CWD="+cwd)
+	}
+	return values[len(os.Environ()):]
+}
+
 func safeEnvironmentName(name string, allowed map[string]bool) bool {
 	return allowed[name] || strings.HasPrefix(name, "DSH_") || strings.HasPrefix(name, "DEEPSEEK_") || strings.HasPrefix(name, "SALAD_DSH_")
 }

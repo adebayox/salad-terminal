@@ -33,6 +33,12 @@ esac
 source_dir="$(cd "$source_dir" && pwd -P)"
 mkdir -p "$output_dir"
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# Apply Salad's fail-closed safety boundary to the pinned DSH source before
+# compiling the carrier. The patch is shape-checked and aborts if upstream
+# changes the seam we rely on.
+python3 "$script_dir/patch-dsh-security.py" "$source_dir"
+
 node - "$source_dir" "$target" <<'NODE'
 const fs = require('node:fs')
 const path = require('node:path')

@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,7 @@ type RunRecord struct {
 	ID        string    `json:"id"`
 	Workspace string    `json:"workspace"`
 	Protocol  string    `json:"protocol"`
+	SessionID string    `json:"session_id,omitempty"`
 	Command   string    `json:"command,omitempty"`
 	Config    string    `json:"config,omitempty"`
 	Prompt    string    `json:"prompt"`
@@ -70,6 +73,34 @@ func runDirectory() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, installDirName, "runs"), nil
+}
+
+// SessionRoot returns a private, stable persistence directory for one trusted
+// workspace. DSH's JSON-RPC runtime uses this directory to restore a named
+// session after the carrier process exits; the workspace path itself is not
+// used as a filename.
+func SessionRoot(workspace string) (string, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return "", errors.New("workspace is required")
+	}
+	base, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256([]byte(filepath.Clean(workspace)))
+	return filepath.Join(base, installDirName, "sessions", hex.EncodeToString(digest[:16])), nil
+}
+
+func EnsureSessionRoot(workspace string) (string, error) {
+	root, err := SessionRoot(workspace)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", fmt.Errorf("create harness session directory: %w", err)
+	}
+	return root, nil
 }
 
 func safeRunID(id string) string {

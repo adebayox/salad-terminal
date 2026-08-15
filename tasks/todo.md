@@ -274,3 +274,25 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   network policy to the DSH composition, with sentinel and exfiltration tests.
 - [ ] Decide whether the DSH carrier is installed lazily or remains opt-out;
   disclose the size and make the lightweight install path obvious.
+
+### Engineer-terminal safety implementation slice (2026-08-15)
+
+- Plan: keep the normal Salad Chat product and runtime outside this change; patch the pinned DSH carrier only so model-controlled filesystem reads and shell commands have an explicit sensitive-file and network boundary.
+- Scope: `tools/build-dsh-acp-carrier.sh`, the DSH source patch applied by that builder, and harness environment defaults/tests. No SaladBE or normal terminal-chat tool path changes.
+- Safety rule: filesystem tool reads of credential-shaped files fail closed; confined shell commands default to no network and deny the same sensitive file family at the OS runner where the platform supports it. Provider traffic remains in the DSH parent/bridge path and is not changed by this slice.
+- Verification required: build the carrier from the pinned source, run a real sentinel `.env` read negative, run a shell network negative, rerun the real project build, and verify direct-key/provider-bridge startup still works. If any platform cannot prove the boundary, it remains a release blocker.
+- Remaining after this slice: true cross-command session restore, persistent process/dev-server control, reconnect/replay, and full platform parity.
+
+- Completed in this slice: added a shape-checked DSH source patch, default
+  `DSH_NETWORK_MODE=deny` for both ACP and JSON-RPC child launches, a protected
+  credential-file family, and real macOS carrier smoke tests for secret read,
+  shell network, provider bridge, and ordinary workspace write.
+- Still open: Linux carrier proof, Windows capability decision, and a visible
+  allowlisted network approval flow instead of the preview escape hatch.
+- Follow-on completed: JSON-RPC run records now retain the DSH session ID and
+  use a private, stable per-workspace session directory, so JSON-RPC resume
+  reuses persisted DSH history instead of copying the old prompt. ACP remains
+  fresh-session by protocol design.
+- Verification still required: run two separate invocations through a
+  packaged JSON-RPC carrier and prove the second sees the first session's
+  durable history; the carrier executed in this slice was ACP.

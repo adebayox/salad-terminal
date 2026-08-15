@@ -84,6 +84,26 @@ func TestScrubbedEnvironment(t *testing.T) {
 	}
 }
 
+func TestHarnessSafetyDefaultsDenyNetworkUnlessExplicitlyOverridden(t *testing.T) {
+	defaulted := withHarnessSafetyDefaults(nil, "/tmp/workspace")
+	if !containsEnvironment(defaulted, "DSH_NETWORK_MODE=deny") || !containsEnvironment(defaulted, "DSH_CWD=/tmp/workspace") {
+		t.Fatalf("defaults = %v", defaulted)
+	}
+	overridden := withHarnessSafetyDefaults([]string{"DSH_NETWORK_MODE=allow"}, "/tmp/workspace")
+	if !containsEnvironment(overridden, "DSH_NETWORK_MODE=allow") || containsEnvironment(overridden, "DSH_NETWORK_MODE=deny") {
+		t.Fatalf("override = %v", overridden)
+	}
+}
+
+func containsEnvironment(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTerminalSafeRemovesControlSequences(t *testing.T) {
 	got := terminalSafe("ok\x1b]0;evil\x07\x1b[31mred\x1b[0m\x01")
 	if got != "okred" {
