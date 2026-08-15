@@ -255,6 +255,10 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   agent created and verified a file. The first attempt exposed a test-launch
   cwd mistake and created a temporary home README; that file was removed, and
   an explicit-cd rerun recorded the correct disposable workspace.
+- [x] Run a harmless sentinel security test against the real DSH filesystem
+  tool. It can read a project `.env` and return its content to the model; DSH's
+  current file policy also leaves network access available. This is a P1
+  release blocker for prompt-injection and secret-exfiltration risk.
 - [x] Read DeepSeek's source architecture. It has durable event-sourced
   sessions, subagents, background jobs, workflows, sandbox policy, and replay
   concepts. Salad's ACP adapter currently exposes fresh sessions only.
@@ -266,5 +270,7 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [ ] Add true session restore, long-running process management, background
   task controls, and reconnect/replay before calling the engineer terminal
   production-ready.
+- [ ] Add an enforced secret-read deny layer and default-deny/allowlisted
+  network policy to the DSH composition, with sentinel and exfiltration tests.
 - [ ] Decide whether the DSH carrier is installed lazily or remains opt-out;
   disclose the size and make the lightweight install path obvious.
