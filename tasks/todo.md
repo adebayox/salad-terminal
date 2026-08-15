@@ -559,7 +559,11 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [x] Added a release-gated Linux carrier smoke: boot the packaged carrier,
   initialize ACP, create a session, complete a prompt through a local mock
   DeepSeek endpoint, and prove bubblewrap denies external network access.
-- [ ] Run the new smoke on the follow-up branch and add native Windows
+- [x] Run the new smoke on the follow-up branch; release workflow
+  `31898110098` passed on native Linux x64 and ARM64. It booted the packaged
+  carrier through ACP against a local mock provider and passed the network
+  deny check on both architectures.
+- [ ] Add native Windows
   installer/runtime evidence. DeepSeek's pinned carrier builder currently
   supports Linux/macOS only, so Windows engineer mode still needs an explicit
   product/runtime decision rather than a misleading partial install.
