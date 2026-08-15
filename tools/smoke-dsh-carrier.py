@@ -16,12 +16,22 @@ import time
 class MockDeepSeek(http.server.BaseHTTPRequestHandler):
     requests: list[dict] = []
 
+    @staticmethod
+    def should_fail(request: dict) -> bool:
+        messages = request.get("messages")
+        if not isinstance(messages, list):
+            return False
+        for message in reversed(messages):
+            if isinstance(message, dict) and message.get("role") == "user":
+                return "trigger-provider-error" in json.dumps(message)
+        return False
+
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler contract
         length = int(self.headers.get("content-length", "0"))
         body = self.rfile.read(length)
         request = json.loads(body)
         self.requests.append(request)
-        if "trigger-provider-error" in json.dumps(request):
+        if self.should_fail(request):
             encoded = json.dumps({"error": {"message": "simulated provider outage"}}).encode()
             self.send_response(503)
             self.send_header("Content-Type", "application/json")
