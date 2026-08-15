@@ -7,6 +7,25 @@ chat, TUI, or SaladBE files were changed in this audit.
 
 ## Direct checks
 
+### Fresh installed-release recheck
+
+The exact installed `v0.2.16` release was exercised again against a fresh,
+dependency-free Node project rather than accepted from the earlier audit alone.
+The model read `AGENTS.md`, added `uptime_seconds` to `/health`, updated the
+test, and `npm test` passed after the run was explicitly started with
+`--network loopback`. A fresh run without loopback correctly failed to bind
+localhost, but the model did not clearly explain that recovery path.
+
+The public carrier also did not reliably honor an environment assignment in a
+long-running command: it reported success while the app remained on its
+default port. This exposed a real developer-experience gap. A candidate
+carrier rebuilt from the pinned DeepSeek commit with stronger persistent-
+terminal instructions then opened a terminal, ran `python3 -m http.server 4321
+--bind 127.0.0.1`, verified it from another terminal, received the directory
+listing, and closed the terminal with no listener left behind. Its collaborator
+review returned a concrete health-endpoint finding. The candidate was restored
+afterward; the managed install is again the exact public `v0.2.16` runtime.
+
 - `go test ./...`, `go vet ./...`, `bash -n tools/build-dsh-acp-carrier.sh`,
   and Python syntax compilation pass.
 - Public `v0.2.12` install was run in an isolated prefix. The terminal binary

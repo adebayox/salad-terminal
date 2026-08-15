@@ -556,6 +556,26 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   provider-error recovery are now verified. Normal Salad Chat remains outside
   this work and has no changed files.
 
+### Fresh engineer workflow recheck (2026-08-15)
+
+- [x] Repeated the exact installed v0.2.16 flow against a fresh Node project
+  instead of relying on the earlier audit: project instructions were read,
+  `/health` was improved, the test passed, and the loopback approval path was
+  exercised.
+- [x] Rebuilt the pinned macOS carrier from DeepSeek commit
+  `47f943859bef60e4160492346772ded9b24f765a` after adding explicit guidance
+  for persistent terminal/job use and evidence-based reporting. The carrier
+  built successfully, a collaborator returned a concrete review, and a real
+  persistent terminal served port 4321, was checked externally, and was closed
+  with no listener remaining.
+- [x] Found a real remaining UX gap: the model can mishandle shell environment
+  assignments for long-running commands and report the wrong port. Direct
+  command arguments work through the persistent terminal path; this needs a
+  follow-up evaluation before release.
+- [ ] Publish the carrier guidance change and repeat the clean exact-release
+  workflow, including environment-based app startup, cancellation, and
+  cross-platform release checks.
+
 ### Native Linux release smoke (2026-08-15)
 
 - [x] Rebased the engineer follow-up branch onto the published v0.2.16 main
