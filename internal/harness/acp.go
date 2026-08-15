@@ -40,10 +40,32 @@ type acpPromptResult struct {
 	StopReason string `json:"stopReason"`
 }
 
+type acpInitializeResult struct {
+	AgentCapabilities struct {
+		LoadSession         bool `json:"loadSession"`
+		SessionCapabilities struct {
+			Resume json.RawMessage `json:"resume"`
+			Close  json.RawMessage `json:"close"`
+		} `json:"sessionCapabilities"`
+	} `json:"agentCapabilities"`
+}
+
 // RunACP starts one local ACP child, drives one prompt, handles the child's
 // permission requests, and cancels the addressed session if ctx is cancelled.
 func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
-	if strings.TrimSpace(prompt) == "" {
+	return runACP(ctx, opts, prompt, false)
+}
+
+// RunACPInteractive keeps one ACP process and session alive for multiple
+// prompts. If initialPrompt is non-empty, it is sent before reading the next
+// prompt. EOF cleanly shuts the process down. This is the engineer-facing
+// session boundary; it does not use Salad Chat's message or tool loop.
+func RunACPInteractive(ctx context.Context, opts Options, initialPrompt string) (Result, error) {
+	return runACP(ctx, opts, initialPrompt, true)
+}
+
+func runACP(ctx context.Context, opts Options, prompt string, interactive bool) (Result, error) {
+	if !interactive && strings.TrimSpace(prompt) == "" {
 		return Result{}, errors.New("harness prompt cannot be empty")
 	}
 	if strings.TrimSpace(opts.Cwd) == "" {
@@ -58,6 +80,7 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 	if opts.Model == "" {
 		opts.Model = firstNonEmpty(os.Getenv("SALAD_DSH_MODEL"), defaultModel)
 	}
+	resumeRequested := strings.TrimSpace(opts.SessionID) != ""
 	if opts.SessionID == "" {
 		id, err := newID()
 		if err != nil {
@@ -74,8 +97,9 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 	inputReader := bufio.NewReader(opts.Input)
 
 	cmd := exec.Command(opts.Command, opts.Args...)
+	prepareProcessGroup(cmd)
 	cmd.Dir = opts.Cwd
-	cmd.Env = scrubbedEnvironment(append(opts.Env, "DSH_CWD="+opts.Cwd))
+	cmd.Env = scrubbedEnvironment(withHarnessSafetyDefaults(opts.Env, opts.Cwd))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return Result{}, fmt.Errorf("start harness stdin: %w", err)
@@ -154,7 +178,7 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 			select {
 			case <-finished:
 			case <-time.After(3 * time.Second):
-				killOnce.Do(func() { _ = cmd.Process.Kill() })
+				killOnce.Do(func() { _ = killProcessTree(cmd) })
 			}
 		case <-finished:
 		}
@@ -202,60 +226,152 @@ func RunACP(ctx context.Context, opts Options, prompt string) (Result, error) {
 		}
 	}
 
-	if _, err := request("1", "initialize", map[string]any{
+	initializeResult, err := request("1", "initialize", map[string]any{
 		"protocolVersion":    1,
 		"clientCapabilities": map[string]any{},
-	}); err != nil {
-		return Result{}, err
-	}
-	newSessionParams, err := request("2", "session/new", map[string]any{
-		"cwd": opts.Cwd, "mcpServers": []any{},
 	})
 	if err != nil {
 		return Result{}, err
 	}
-	var session struct {
-		SessionID string `json:"sessionId"`
+	var initialized acpInitializeResult
+	if err := json.Unmarshal(initializeResult, &initialized); err != nil {
+		return Result{}, fmt.Errorf("decode ACP initialize response: %w", err)
 	}
-	if err := json.Unmarshal(newSessionParams, &session); err != nil || session.SessionID == "" {
-		return Result{}, errors.New("ACP session/new returned no session id")
-	}
-	setSession(session.SessionID)
 
-	if err := writeFrame(map[string]any{
-		"jsonrpc": "2.0", "id": "3", "method": "session/prompt",
-		"params": map[string]any{
-			"sessionId": session.SessionID,
-			"prompt":    []map[string]string{{"type": "text", "text": prompt}},
-		},
-	}); err != nil {
-		return Result{}, err
-	}
-	for {
-		frame, err := read()
+	sessionID := ""
+	canResume := len(initialized.AgentCapabilities.SessionCapabilities.Resume) > 0 && string(initialized.AgentCapabilities.SessionCapabilities.Resume) != "null"
+	if resumeRequested && (initialized.AgentCapabilities.LoadSession || canResume) {
+		setSession(opts.SessionID)
+		method := "session/resume"
+		if initialized.AgentCapabilities.LoadSession {
+			method = "session/load"
+		}
+		if _, err := request("2", method, map[string]any{
+			"sessionId": opts.SessionID, "cwd": opts.Cwd, "mcpServers": []any{},
+		}); err != nil {
+			return Result{}, err
+		}
+		sessionID = opts.SessionID
+	} else {
+		if resumeRequested {
+			fmt.Fprintln(opts.Output, "[engineer] carrier does not advertise session restore; starting a fresh continuation")
+		}
+		newSessionParams, err := request("2", "session/new", map[string]any{
+			"cwd": opts.Cwd, "mcpServers": []any{},
+		})
 		if err != nil {
 			return Result{}, err
 		}
-		if frame.Method != "" {
-			if err := handleACPFrame(opts, inputReader, writeResponse, frame, session.SessionID); err != nil {
+		var session struct {
+			SessionID string `json:"sessionId"`
+		}
+		if err := json.Unmarshal(newSessionParams, &session); err != nil || session.SessionID == "" {
+			return Result{}, errors.New("ACP session/new returned no session id")
+		}
+		sessionID = session.SessionID
+	}
+	setSession(sessionID)
+
+	promptOnce := func(id, text string) error {
+		if err := writeFrame(map[string]any{
+			"jsonrpc": "2.0", "id": id, "method": "session/prompt",
+			"params": map[string]any{
+				"sessionId": sessionID,
+				"prompt":    []map[string]string{{"type": "text", "text": text}},
+			},
+		}); err != nil {
+			return err
+		}
+		for {
+			frame, err := read()
+			if err != nil {
+				return err
+			}
+			if frame.Method != "" {
+				if err := handleACPFrame(opts, inputReader, writeResponse, frame, sessionID); err != nil {
+					return err
+				}
+				continue
+			}
+			if string(frame.ID) != id {
+				return fmt.Errorf("unexpected ACP prompt response id %q", frame.ID)
+			}
+			if frame.Error != nil {
+				return fmt.Errorf("ACP session/prompt failed (%d): %s", frame.Error.Code, frame.Error.Message)
+			}
+			var result acpPromptResult
+			if err := json.Unmarshal(frame.Result, &result); err != nil {
+				return fmt.Errorf("decode ACP prompt response: %w", err)
+			}
+			if result.StopReason != "" {
+				fmt.Fprintf(opts.Output, "[engineer] %s\n", result.StopReason)
+			}
+			return nil
+		}
+	}
+
+	if !interactive {
+		if err := promptOnce("3", prompt); err != nil {
+			return Result{}, err
+		}
+		return Result{SessionID: sessionID}, nil
+	}
+
+	promptID := 3
+	if strings.TrimSpace(prompt) != "" {
+		if err := promptOnce(strconv.Itoa(promptID), prompt); err != nil {
+			return Result{}, err
+		}
+		promptID++
+	}
+	for {
+		fmt.Fprint(opts.Output, "\n[salad engineer] > ")
+		line, err := readLineContext(ctx, inputReader, opts.InputCloser)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return Result{}, fmt.Errorf("read engineer prompt: %w", err)
+		}
+		text := strings.TrimSpace(line)
+		if text != "" {
+			if err := promptOnce(strconv.Itoa(promptID), text); err != nil {
 				return Result{}, err
 			}
-			continue
+			promptID++
 		}
-		if string(frame.ID) != "3" {
-			return Result{}, fmt.Errorf("unexpected ACP prompt response id %q", frame.ID)
+		if errors.Is(err, io.EOF) {
+			break
 		}
-		if frame.Error != nil {
-			return Result{}, fmt.Errorf("ACP session/prompt failed (%d): %s", frame.Error.Code, frame.Error.Message)
+	}
+	canClose := len(initialized.AgentCapabilities.SessionCapabilities.Close) > 0 && string(initialized.AgentCapabilities.SessionCapabilities.Close) != "null"
+	if canClose {
+		if _, err := request(strconv.Itoa(promptID), "session/close", map[string]string{"sessionId": sessionID}); err != nil {
+			return Result{}, err
 		}
-		var result acpPromptResult
-		if err := json.Unmarshal(frame.Result, &result); err != nil {
-			return Result{}, fmt.Errorf("decode ACP prompt response: %w", err)
+	}
+	return Result{SessionID: sessionID}, nil
+}
+
+// readLineContext prevents Ctrl-C from leaving the engineer command blocked
+// in a terminal read while the child process is already being cancelled.
+// InputCloser is normally os.Stdin. The result channel is buffered so a
+// reader that completes just after cancellation cannot leak a goroutine.
+func readLineContext(ctx context.Context, input *bufio.Reader, closer io.Closer) (string, error) {
+	type lineResult struct {
+		line string
+		err  error
+	}
+	result := make(chan lineResult, 1)
+	go func() {
+		line, err := input.ReadString('\n')
+		result <- lineResult{line: line, err: err}
+	}()
+	select {
+	case read := <-result:
+		return read.line, read.err
+	case <-ctx.Done():
+		if closer != nil {
+			_ = closer.Close()
 		}
-		if result.StopReason != "" {
-			fmt.Fprintf(opts.Output, "[harness] %s\n", result.StopReason)
-		}
-		return Result{SessionID: session.SessionID}, nil
+		return "", ctx.Err()
 	}
 }
 
@@ -280,7 +396,7 @@ func handleACPFrame(opts Options, input *bufio.Reader, respond func(rpcID, any) 
 		if params.SessionID != sessionID {
 			return fmt.Errorf("ACP permission request targeted unexpected session %q", params.SessionID)
 		}
-		fmt.Fprintln(opts.Output, "\n[harness] This action needs approval.")
+		fmt.Fprintln(opts.Output, "\n[engineer] This action needs approval.")
 		fmt.Fprint(opts.Output, "Allow once? [y/N] ")
 		line, err := input.ReadString('\n')
 		allow := err == nil && (strings.EqualFold(strings.TrimSpace(line), "y") || strings.EqualFold(strings.TrimSpace(line), "yes"))

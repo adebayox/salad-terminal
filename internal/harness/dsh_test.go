@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func TestRunACPWithFakeRuntimeUsesNumericIDsAndRejectsApproval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	result, err := RunACP(ctx, Options{
-		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACP"}, Cwd: t.TempDir(),
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACP"}, Cwd: t.TempDir(), SessionID: "saved-session",
 		Env: []string{"SALAD_DSH_TEST_HELPER=acp"}, Input: strings.NewReader("n\n"), Output: &output,
 	}, "Make a safe change")
 	if err != nil {
@@ -40,8 +41,62 @@ func TestRunACPWithFakeRuntimeUsesNumericIDsAndRejectsApproval(t *testing.T) {
 	if result.SessionID != "fake-acp-session" {
 		t.Fatalf("RunACP() session = %q", result.SessionID)
 	}
-	if !strings.Contains(output.String(), "ACP fake response") || !strings.Contains(output.String(), "Allow once?") {
+	if !strings.Contains(output.String(), "ACP fake response") || !strings.Contains(output.String(), "Allow once?") || !strings.Contains(output.String(), "fresh continuation") {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestRunACPUsesAdvertisedSessionRestore(t *testing.T) {
+	var output strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := RunACP(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPResume"}, Cwd: t.TempDir(), SessionID: "saved-session",
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp-resume"}, Input: strings.NewReader(""), Output: &output,
+	}, "Continue the work")
+	if err != nil {
+		t.Fatalf("RunACP() error = %v", err)
+	}
+	if result.SessionID != "saved-session" || !strings.Contains(output.String(), "ACP resumed response") {
+		t.Fatalf("session = %q output = %q", result.SessionID, output.String())
+	}
+}
+
+func TestRunACPInteractiveKeepsOneSessionAcrossPrompts(t *testing.T) {
+	var output strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := RunACPInteractive(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPInteractive"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp-interactive"}, Input: strings.NewReader("first request\nsecond request\n"), Output: &output,
+	}, "")
+	if err != nil {
+		t.Fatalf("RunACPInteractive() error = %v", err)
+	}
+	if result.SessionID != "interactive-acp-session" {
+		t.Fatalf("RunACPInteractive() session = %q", result.SessionID)
+	}
+	if !strings.Contains(output.String(), "response 1") || !strings.Contains(output.String(), "response 2") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestRunACPStartsFreshWhenSessionIDWasNotRequested(t *testing.T) {
+	var output strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := RunACP(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACPResume"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp-resume"}, Output: &output,
+	}, "Start new work")
+	if err != nil {
+		t.Fatalf("RunACP() error = %v", err)
+	}
+	if result.SessionID != "fresh-acp-session" || !strings.Contains(output.String(), "fresh response") {
+		t.Fatalf("session = %q output = %q", result.SessionID, output.String())
+	}
+	if strings.Contains(output.String(), "carrier does not advertise session restore") {
+		t.Fatalf("fresh run incorrectly reported a restore fallback: %q", output.String())
 	}
 }
 
@@ -82,6 +137,38 @@ func TestScrubbedEnvironment(t *testing.T) {
 	if !strings.Contains(joined, "DEEPSEEK_API_KEY=explicit-runtime-key") || !strings.Contains(joined, "DSH_CORDIS_CONFIG=/tmp/config.yml") {
 		t.Fatalf("runtime configuration missing: %q", joined)
 	}
+}
+
+func TestScrubbedEnvironmentDoesNotInheritNetworkAllow(t *testing.T) {
+	t.Setenv("DSH_NETWORK_MODE", "allow")
+	env := scrubbedEnvironment(withHarnessSafetyDefaults(nil, "/tmp/workspace"))
+	if !containsEnvironment(env, "DSH_NETWORK_MODE=deny") || containsEnvironment(env, "DSH_NETWORK_MODE=allow") {
+		t.Fatalf("network capability inherited from parent: %v", env)
+	}
+	env = scrubbedEnvironment(withHarnessSafetyDefaults([]string{"DSH_NETWORK_MODE=allow"}, "/tmp/workspace"))
+	if !containsEnvironment(env, "DSH_NETWORK_MODE=allow") || containsEnvironment(env, "DSH_NETWORK_MODE=deny") {
+		t.Fatalf("explicit network capability was not preserved: %v", env)
+	}
+}
+
+func TestHarnessSafetyDefaultsDenyNetworkUnlessExplicitlyOverridden(t *testing.T) {
+	defaulted := withHarnessSafetyDefaults(nil, "/tmp/workspace")
+	if !containsEnvironment(defaulted, "DSH_NETWORK_MODE=deny") || !containsEnvironment(defaulted, "DSH_CWD=/tmp/workspace") {
+		t.Fatalf("defaults = %v", defaulted)
+	}
+	overridden := withHarnessSafetyDefaults([]string{"DSH_NETWORK_MODE=allow"}, "/tmp/workspace")
+	if !containsEnvironment(overridden, "DSH_NETWORK_MODE=allow") || containsEnvironment(overridden, "DSH_NETWORK_MODE=deny") {
+		t.Fatalf("override = %v", overridden)
+	}
+}
+
+func containsEnvironment(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTerminalSafeRemovesControlSequences(t *testing.T) {
@@ -159,6 +246,84 @@ func TestHarnessFakeACP(t *testing.T) {
 				}},
 			})
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "result": map[string]string{"stopReason": "end_turn"}})
+			return
+		}
+	}
+}
+
+func TestHarnessFakeACPResume(t *testing.T) {
+	if os.Getenv("SALAD_DSH_TEST_HELPER") != "acp-resume" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	for scanner.Scan() {
+		var frame map[string]any
+		if json.Unmarshal(scanner.Bytes(), &frame) != nil {
+			continue
+		}
+		method, _ := frame["method"].(string)
+		switch method {
+		case "initialize":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{
+				"protocolVersion":   1,
+				"agentCapabilities": map[string]any{"loadSession": true},
+			}})
+		case "session/load":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "result": map[string]any{}})
+		case "session/new":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "result": map[string]string{"sessionId": "fresh-acp-session"}})
+		case "session/prompt":
+			params, _ := frame["params"].(map[string]any)
+			sessionID, _ := params["sessionId"].(string)
+			response := "ACP resumed response"
+			if sessionID == "fresh-acp-session" {
+				response = "fresh response"
+			}
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+				"sessionId": sessionID, "update": map[string]any{
+					"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": response},
+				},
+			}})
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "result": map[string]string{"stopReason": "end_turn"}})
+			return
+		}
+	}
+}
+
+func TestHarnessFakeACPInteractive(t *testing.T) {
+	if os.Getenv("SALAD_DSH_TEST_HELPER") != "acp-interactive" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	promptCount := 0
+	for scanner.Scan() {
+		var frame map[string]any
+		if json.Unmarshal(scanner.Bytes(), &frame) != nil {
+			continue
+		}
+		method, _ := frame["method"].(string)
+		id := frame["id"]
+		switch method {
+		case "initialize":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{
+				"protocolVersion": 1, "agentCapabilities": map[string]any{"sessionCapabilities": map[string]any{"close": map[string]any{}}},
+			}})
+		case "session/new":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]string{"sessionId": "interactive-acp-session"}})
+		case "session/prompt":
+			promptCount++
+			params, _ := frame["params"].(map[string]any)
+			sessionID, _ := params["sessionId"].(string)
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+				"sessionId": sessionID, "update": map[string]any{
+					"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": fmt.Sprintf("response %d", promptCount)},
+				},
+			}})
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]string{"stopReason": "end_turn"}})
+		case "session/close":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}})
 			return
 		}
 	}

@@ -1,9 +1,9 @@
 # DeepSeek Harness preview
 
-Salad Terminal now has an opt-in bridge to DeepSeek Harness. This is a local
-developer preview; it is not the normal Salad chat engine. The interactive
-bridge uses DeepSeek's ACP interface because it supports approval decisions
-and cancellation.
+Salad Terminal has one engineer-facing command backed by a local DeepSeek
+Harness preview. This is not a second terminal and it is not the normal Salad
+chat engine. The engineer command keeps one ACP process alive for follow-up
+prompts, approvals, and cancellation.
 
 ## What is unchanged
 
@@ -18,7 +18,8 @@ salad resume <chat-id>
 salad say "..."
 ```
 
-The preview does not create messages or enter Salad's normal AI router. If a
+The engineer session does not create messages or enter Salad's normal AI
+router. If a
 chat is active, it may publish a small lifecycle receipt through
 the authenticated `/api/harness/events` endpoint. That receipt contains a
 run ID, opaque workspace ID, status, and short summary; it does not contain
@@ -43,12 +44,39 @@ select one explicitly:
 
 ```text
 salad login
-salad harness --salad-provider openai \
+salad engineer --salad-provider openai \
   "Inspect the tests, show a plan first, and do not edit yet."
 ```
 
+For the normal engineer workflow, leave the prompt off and keep the session
+open:
+
+```text
+salad engineer
+[salad engineer] > read the project instructions and summarize the architecture
+[salad engineer] > now make the smallest fix and run the focused tests
+```
+
+The same local ACP session receives both prompts. Ctrl-C cancels the active
+turn and Ctrl-D ends the session cleanly. `salad harness` remains the
+compatibility name for one-shot and carrier-management commands.
+
 Developers who intentionally use a direct DeepSeek key can use the escape
 hatch `DEEPSEEK_API_KEY=...`; Salad never stores or forwards that key.
+
+The managed carrier protects common credential-shaped files from the model,
+including `.env*`, `.ssh`, `.aws`, private keys, and package credential files.
+Confined shell commands start with network disabled. For a trusted operation
+that genuinely needs network access, request it per run:
+
+```text
+salad engineer --network allow "Install the dependencies and run the test suite"
+```
+
+Salad prints a warning and asks for confirmation before starting that run.
+Setting `DSH_NETWORK_MODE=allow` in the parent shell is rejected; network is
+not an invisible environment switch. This is a visible per-run approval, not
+yet a domain allowlist, so network-dependent work remains a preview feature.
 
 Before starting, check the local setup without touching the project:
 
@@ -64,7 +92,7 @@ an existing carrier unless `--force` is supplied:
 ```text
 salad harness install --runtime /path/to/dsh-acp-agent --config /path/to/cordis.yml
 salad harness doctor
-salad harness "read the project instructions, inspect the tests, and make a plan"
+salad engineer "read the project instructions, inspect the tests, and make a plan"
 salad harness rollback
 ```
 
@@ -74,29 +102,56 @@ realtime events, not messages, so they do not trigger normal Salad AI
 routing. A signed-out account can still use the direct-key escape hatch;
 otherwise the authenticated Salad provider bridge is required.
 
-Each ACP run receives a local run ID. Continue a previous run explicitly with:
+Receipts are optional. If the server has the provider bridge but not the
+separate receipt endpoint, the engineer run continues normally and the CLI
+does not treat the optional 404 as a run failure. The provider bridge is the
+required path for Salad-backed engineering.
+
+Each engineer session receives a local run ID. Continue a previous run
+explicitly with:
 
 ```text
 salad harness resume <run-id> "Now run the focused test and explain the result"
 ```
 
-DeepSeek ACP currently starts a fresh session for this command. Salad makes
-that limitation explicit and carries the previous request into the new local
-run record; it does not pretend to offer server-side session resume.
+Salad records the actual ACP session ID returned by the carrier. When a future
+carrier advertises ACP `session/load` or `session/resume`, Salad uses that
+capability to restore the saved session. Older public preview carriers do not
+advertise either capability, so Salad prints that it is starting a fresh
+continuation with those carriers. The rebuilt candidate in this repository
+does advertise `session/resume` and restores the same workspace session across
+two processes.
 
 When DSH asks to do something outside its allowed workspace, Salad shows a
 clear `Allow once? [y/N]` question. The safe default is rejection. Press
 Ctrl-C to cancel the local run.
 
-The ACP preview starts a fresh DSH session for each invocation. DeepSeek's ACP
-bridge does not yet expose resume/list/load, so `salad harness resume` is a
-Salad continuation rather than a DSH session restore. The old SDK JSON-RPC
-mode is available only as an explicit compatibility option:
+The ACP adapter is capability-aware: it only calls `session/load` or
+`session/resume` when the carrier advertises support, following the current
+ACP protocol. With an older DSH preview, `salad harness resume` remains a
+transparent Salad continuation. With the rebuilt candidate, it uses real ACP
+restore and refuses a resume request whose workspace path does not match the
+stored session.
+The explicit JSON-RPC mode is wired to reuse DSH's persisted session and stores
+its session files in Salad's private config directory, not in the repository.
+That restore path has now been verified across two separate invocations with a
+packaged carrier built from the pinned DSH source. The carrier build applies a
+small, shape-checked Salad patch so the JSON-RPC server calls DSH's real resume
+API when the session already exists. The second process saw a marker written by
+the first process. This is compatibility evidence, not a claim that the
+pinned default ACP carrier restores sessions:
 
 ```text
 salad harness --protocol jsonrpc --command /path/to/dsh-jsonrpc-agent \
-  --session salad-your-session-id "Continue from the previous run"
+  "Inspect the failing test"
+salad harness resume <run-id> "Now fix it and rerun the test"
 ```
+
+The JSON-RPC runtime still has no per-prompt cancel method and is not shipped
+as Salad's default carrier, so it remains a compatibility path rather than the
+default interactive approval path. The disposable smoke used the upstream
+JSON-RPC example composition; that composition is not itself the release
+security profile.
 
 ## Runtime packaging
 
@@ -122,8 +177,13 @@ Salad Terminal
        └─ session cancellation, then bounded kill fallback
 ```
 
-The current ACP contract is intentionally limited: fresh sessions only, with
-no server-side resume/list/load. `salad harness resume` is transparent local
-continuation, not a claim that ACP restored DSH history. The integration
-remains opt-in: normal Salad chat never launches this process and no DSH
-session becomes the Salad chat source of truth.
+The previously published pinned ACP carrier exposed fresh sessions only, with
+no server-side resume/list/load. The current build contains a shape-checked
+source patch that exposes DSH's existing durable `ctx.agents.resume()` and
+session-close capabilities through ACP. A locally packaged macOS candidate has
+passed a two-process restore smoke and a mismatched-workspace negative test, but
+it has not yet been published in a Salad release. JSON-RPC can restore a
+persisted DSH session when a developer supplies a compatible carrier, but that
+mode is not the default interactive path. The integration remains opt-in:
+normal Salad chat never launches this process and no DSH session becomes the
+Salad chat source of truth.

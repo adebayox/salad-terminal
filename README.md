@@ -18,7 +18,7 @@ system and CPU. It checks the SHA-256 checksum before it installs the binary.
 To install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.5 bash
+curl -fsSL https://raw.githubusercontent.com/adebayox/salad-terminal/main/install.sh | SALAD_TERMINAL_RELEASE=v0.2.11 bash
 ```
 
 ### Windows
@@ -32,6 +32,31 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 The installer checks the SHA-256 checksum and puts `salad.exe` in
 `%LOCALAPPDATA%\Salad\bin`.
+
+## Engineer mode
+
+The `salad engineer` command runs an agent in the trusted repository you
+choose. It keeps one local session open for follow-up prompts and is separate
+from normal Salad chat; prompts and tool calls do not go through normal chat
+routing:
+
+```bash
+cd your-repository
+salad workspace trust
+salad engineer "Inspect the project, run the tests, and explain what you found"
+# Or start an open-ended engineer session:
+salad engineer
+```
+
+`salad harness` remains as a compatibility command for carrier installation,
+diagnostics, JSON-RPC compatibility runs, and older one-shot scripts. It is
+not a second terminal product.
+
+On macOS and Linux, the installer also downloads the harness carrier: about
+54 MB compressed and about 198 MB installed in the current preview. Use
+`SALAD_SKIP_HARNESS=1` when you only want the lightweight chat terminal. The
+Windows installer currently installs the normal terminal only; `salad harness
+doctor` reports that the carrier is unavailable instead of silently failing.
 
 ## Start
 

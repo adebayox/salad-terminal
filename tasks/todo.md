@@ -232,3 +232,189 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   publicly installable. The frontend receipt PR remains open because its CI
   quality job has unrelated pre-existing ChatArea test drift; lifecycle replay
   after reconnect is not implemented yet.
+
+## Engineer-terminal standard audit (2026-08-15)
+
+- [x] Confirm the product boundary: normal Salad Chat remains unchanged; DSH
+  is an internal runtime for the one engineer-facing Salad Terminal.
+- [x] Drive a real DSH project workflow with the public v0.2.11 binary and
+  managed carrier: create files, run `npm run build`, and verify built output.
+- [x] Drive the installed normal terminal workspace-tool path separately in a
+  disposable project. File-edit approval rendered and applied correctly; the
+  run-command request later returned `TOOL_RESULT_UNKNOWN_REQUEST` during the
+  interactive test, so this path is not signed off as a reliable engineer loop.
+- [x] Measure packaging: terminal binary is about 15 MB installed; macOS
+  arm64 DSH carrier is about 198 MB installed and 53.8 MB compressed. The
+  first install downloads both unless `SALAD_SKIP_HARNESS=1` is set.
+- [x] Run DSH security negatives with the shipped carrier: absolute writes
+  outside the workspace were blocked; symlink writes to a home-directory path
+  outside the workspace were blocked. Platform temp roots are intentionally
+  writable and must be described as such.
+- [x] Exercise the configured DSH background-subagent path through the shipped
+  carrier in the disposable workspace. The subagent completed and the parent
+  agent created and verified a file. The first attempt exposed a test-launch
+  cwd mistake and created a temporary home README; that file was removed, and
+  an explicit-cd rerun recorded the correct disposable workspace.
+- [x] Run a harmless sentinel security test against the real DSH filesystem
+  tool. It can read a project `.env` and return its content to the model; DSH's
+  current file policy also leaves network access available. This is a P1
+  release blocker for prompt-injection and secret-exfiltration risk.
+- [x] Read DeepSeek's source architecture. It has durable event-sourced
+  sessions, subagents, background jobs, workflows, sandbox policy, and replay
+  concepts. Salad's ACP adapter currently exposes fresh sessions only.
+- [x] Record the single-terminal architecture and release gate in
+  `docs/ENGINEER_TERMINAL_STANDARD.md`.
+- [ ] Replace the internal dual execution paths with one engineer-terminal
+  experience: one event model, one approval policy, one run record, and DSH as
+  the replaceable local runtime. Do not change normal Salad Chat.
+- [ ] Add true session restore, long-running process management, background
+  task controls, and reconnect/replay before calling the engineer terminal
+  production-ready.
+- [ ] Add an enforced secret-read deny layer and default-deny/allowlisted
+  network policy to the DSH composition, with sentinel and exfiltration tests.
+- [ ] Decide whether the DSH carrier is installed lazily or remains opt-out;
+  disclose the size and make the lightweight install path obvious.
+
+### Engineer-terminal safety implementation slice (2026-08-15)
+
+- Plan: keep the normal Salad Chat product and runtime outside this change; patch the pinned DSH carrier only so model-controlled filesystem reads and shell commands have an explicit sensitive-file and network boundary.
+- Scope: `tools/build-dsh-acp-carrier.sh`, the DSH source patch applied by that builder, and harness environment defaults/tests. No SaladBE or normal terminal-chat tool path changes.
+- Safety rule: filesystem tool reads of credential-shaped files fail closed; confined shell commands default to no network and deny the same sensitive file family at the OS runner where the platform supports it. Provider traffic remains in the DSH parent/bridge path and is not changed by this slice.
+- Verification required: build the carrier from the pinned source, run a real sentinel `.env` read negative, run a shell network negative, rerun the real project build, and verify direct-key/provider-bridge startup still works. If any platform cannot prove the boundary, it remains a release blocker.
+- Remaining after this slice: true cross-command session restore, persistent process/dev-server control, reconnect/replay, and full platform parity.
+
+- Completed in this slice: added a shape-checked DSH source patch, default
+  `DSH_NETWORK_MODE=deny` for both ACP and JSON-RPC child launches, a protected
+  credential-file family, and real macOS carrier smoke tests for secret read,
+  shell network, provider bridge, and ordinary workspace write. The Seatbelt
+  rule is now global rather than limited to the workspace; the rebuilt carrier
+  includes it.
+- Still open: Linux carrier proof, Windows capability decision, and a visible
+  allowlisted network approval flow instead of the preview escape hatch.
+- Follow-on completed: JSON-RPC run records now retain the DSH session ID and
+  use a private, stable per-workspace session directory, so JSON-RPC resume
+  reuses persisted DSH history instead of copying the old prompt. ACP remains
+  fresh-session by protocol design.
+- Verification completed: two separate invocations through a packaged
+  JSON-RPC carrier built from the pinned DSH source restored the same session;
+  the second provider request saw the first marker and the durable JSONL log
+  contains both turns. The JSON-RPC example composition used for this smoke is
+  not the release security profile, so JSON-RPC remains compatibility-only.
+
+### Engineer-terminal runtime verification follow-up (2026-08-15)
+
+- [x] Correct the outside-write negative test: `/private/tmp` is an allowed OS
+  temporary area under DSH `workspace-write`, so the test now targets a path
+  outside both the trusted workspace and temporary roots. The real installed
+  carrier denied it and the file was absent.
+- [x] Run the real installed carrier through a disposable project workflow after
+  the safety changes. The model-created project recovered from a failed build,
+  reran the build, and independent `npm run build` plus output checks passed.
+- [x] Run the real ACP carrier cancellation path with a 60-second child
+  process. The first run exposed an orphaned `sleep` process; the parent now
+  launches the carrier in its own process group and kills that group on the
+  bounded cancellation fallback. The rerun exited as cancelled with no child
+  process remaining.
+- [x] Build a release-shaped macOS candidate with the rebuilt carrier, serve
+  it locally with its checksum manifest, and run the real installer into an
+  isolated prefix. The installed binary reported its candidate version and
+  `salad harness doctor` verified the managed carrier checksum and config.
+- [ ] Run a model-controlled home-directory credential read against the
+  globally patched macOS carrier; project-local secret denial is verified, but
+  this absolute-path negative is not yet signed off.
+- [x] Validate the exact global Seatbelt expression independently against a
+  home-directory `.env` sentinel; the OS denied the read. This is static
+  policy evidence, not a substitute for the model-controlled carrier smoke.
+- [x] Build and run the packaged JSON-RPC carrier twice to prove durable
+  session restore. ACP remains the verified interactive path; JSON-RPC remains
+  a compatibility path because it has no per-prompt cancellation and is not a
+  distributed default carrier.
+- [x] Make the ACP adapter capability-aware: persist the actual returned ACP
+  session ID, use `session/load` or `session/resume` when the carrier advertises
+  one, and keep an explicit fresh-continuation fallback for the pinned DSH
+  preview that advertises neither. Fake-runtime tests cover both branches.
+- [x] Make the Unix installer transactional across the Salad binary and the
+  managed carrier: carrier download/extraction is preflighted before the
+  binary swap, and a carrier-install failure restores the previous binary.
+  Verified both a failed carrier archive (binary unchanged) and a failed
+  managed install after the binary swap (previous binary restored) with local
+  release fixtures.
+- [x] Close the carrier-side half of that transaction: managed install failure
+  now restores or removes runtime/config/manifest files instead of leaving
+  partial Salad-owned state, forced upgrades refresh all backup components,
+  and `salad harness rollback` removes newly added config when the prior
+  install had none. Unit tests cover partial first-install cleanup and stale
+  config rollback. The Unix installer also rolls back the binary on INT/TERM
+  during the update window.
+- [x] Replace the invisible `DSH_NETWORK_MODE=allow` parent-shell escape hatch
+  with `salad harness --network allow` plus a visible confirmation prompt;
+  parent-shell allow is rejected and the default remains deny.
+- [ ] Prove Linux and Windows carrier safety on native runners, and replace the
+  visible per-run network approval with a domain allowlist.
+- [x] Make `salad engineer` the single user-facing local-agent entry point:
+  one ACP process accepts multiple follow-up prompts, handles approvals in the
+  same session, and shuts down cleanly on Ctrl-D. Keep `salad harness` only as
+  the compatibility path for installation, diagnostics, JSON-RPC, and older
+  one-shot scripts. Normal Salad Chat remains outside this path.
+- [ ] Make the interactive engineer session resume across processes with a
+  real packaged carrier capability, then add reconnect/replay and long-lived
+  process controls before calling the engineer mode production-ready.
+- [ ] Rebuild and smoke the carrier after the source-side ACP patch: the
+  pinned DSH ACP plugin already has durable persistence and `ctx.agents.resume`,
+  so `tools/patch-dsh-security.py` now prepares capability-aware
+  `session/resume` and `session/close` handlers plus a private ACP persistence
+  root. This is not shipped or signed off until a compiled carrier survives
+  two separate processes and rejects a mismatched workspace cwd.
+
+### Latest engineer-terminal verification (2026-08-15)
+
+- [x] Built a real 201 MB macOS x64 ACP carrier from pinned DSH source
+  `47f943859bef60e4160492346772ded9b24f765a`; checksum verification passed and
+  the managed install/doctor path reported the installed digest.
+- [x] Fixed a real fresh-session bug found by the first live CLI attempt: a
+  generated local session ID was being mistaken for a resume request. New ACP
+  runs now call `session/new`; only an explicitly supplied saved ID calls
+  `session/resume` or `session/load`.
+- [x] Ran the installed carrier through a disposable project with actual ACP
+  reads, edits, and `npm test` tool calls, then independently verified the
+  resulting files and test pass. Also verified the same-process interactive
+  two-turn flow and clean Ctrl-D shutdown.
+- [x] Restored a saved ACP session in a second process and recovered the
+  `SALAD-RESTORE-42` marker. A direct resume with a different workspace was
+  rejected with `-32602 Invalid params: session cwd does not match`.
+- [x] Confirmed normal chat remains outside the code path: only terminal
+  harness files changed in this checkout; no `internal/chat`, realtime, TUI,
+  SaladBE, or normal `salad say` files were modified.
+- [ ] The authenticated live provider smoke currently returns HTTP 404 from
+  `https://api.salad.ink/api/harness/provider/v1/chat/completions`. The route
+  exists in the dirty local SaladBE checkout but is not present on the live
+  API, so the patched carrier is not releasable through the Salad provider
+  until that additive engineer-only backend route is deployed and browser/API
+  verified. This is separate from normal Salad Chat.
+- [ ] Publish the patched carrier in a release, repeat clean-install and live
+  provider verification, then close the remaining Linux/Windows native safety,
+  domain-allowlist, long-lived process, reconnect/replay, and receipt-browser
+  gates.
+
+### Live provider promotion follow-up (2026-08-15)
+
+- [x] Identified the 404 as a deployment-source problem: current production
+  `main` did not contain the staging harness work, while staging already served
+  the protected provider route.
+- [x] Promoted only the additive provider gateway and one authenticated,
+  rate-limited route to production. Lifecycle receipt/realtime files and normal
+  chat routing were intentionally excluded.
+- [x] SaladBE PR #106 passed the full backend test, vet, build, lint, and
+  document-compiler checks and was merged to `main` as `b71fe3c`.
+- [ ] Verify the production deployment and run the installed CLI against the
+  live provider route. A route returning 401 without auth is expected; 404 is
+  not.
+- [x] Ran a real human-style engineer workflow against staging with the
+  installed candidate carrier: read `AGENTS.md`, explain the failing test,
+  wait for approval, edit only `main.go`, run `gofmt`, `go test ./...`,
+  `go build ./...`, run the program, review the diff, close with Ctrl-D, and
+  resume from a second process. The workflow produced `Hello, Salad!`, changed
+  only `main.go`, and restored the final answer from the saved run.
+- [x] Fixed the misleading fresh-run message found during that live workflow:
+  the adapter now reports a restore fallback only when the user actually
+  requested a saved-session resume.

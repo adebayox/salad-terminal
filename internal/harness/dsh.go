@@ -31,6 +31,7 @@ type Options struct {
 	Command, Cwd, Provider, Model, SessionID string
 	Args, Env                                []string
 	Input                                    io.Reader
+	InputCloser                              io.Closer
 	Output                                   io.Writer
 }
 
@@ -117,7 +118,8 @@ func Run(ctx context.Context, opts Options, prompt string) (Result, error) {
 	}
 
 	cmd := exec.Command(opts.Command, opts.Args...)
-	cmd.Dir, cmd.Env = opts.Cwd, scrubbedEnvironment(opts.Env)
+	prepareProcessGroup(cmd)
+	cmd.Dir, cmd.Env = opts.Cwd, scrubbedEnvironment(withHarnessSafetyDefaults(opts.Env, opts.Cwd))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return Result{}, fmt.Errorf("start harness stdin: %w", err)
@@ -146,7 +148,7 @@ func Run(ctx context.Context, opts Options, prompt string) (Result, error) {
 			select {
 			case <-finished:
 			case <-time.After(3 * time.Second):
-				killOnce.Do(func() { _ = cmd.Process.Kill() })
+				killOnce.Do(func() { _ = killProcessTree(cmd) })
 			}
 		case <-finished:
 		}
@@ -344,12 +346,45 @@ func scrubbedEnvironment(overlay []string) []string {
 			values[name] = value
 		}
 	}
+	// Network access is a capability, not ordinary child configuration. A
+	// parent shell's DSH_NETWORK_MODE must never silently survive into a run;
+	// only the explicit per-run overlay may select allow.
+	networkMode := "deny"
+	for _, entry := range overlay {
+		if name, value, ok := strings.Cut(entry, "="); ok && name == "DSH_NETWORK_MODE" {
+			networkMode = value
+		}
+	}
+	values["DSH_NETWORK_MODE"] = networkMode
 	out := make([]string, 0, len(values))
 	for name, value := range values {
 		out = append(out, name+"="+value)
 	}
 	return out
 }
+
+// withHarnessSafetyDefaults keeps model-controlled shell commands inside the
+// terminal's safer default. Network mode is supplied only by the caller's
+// explicit per-run overlay; a parent-shell value cannot silently opt in.
+func withHarnessSafetyDefaults(overlay []string, cwd string) []string {
+	values := append([]string{}, overlay...)
+	has := func(name string) bool {
+		for _, entry := range values {
+			if key, _, ok := strings.Cut(entry, "="); ok && key == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("DSH_NETWORK_MODE") {
+		values = append(values, "DSH_NETWORK_MODE=deny")
+	}
+	if !has("DSH_CWD") && strings.TrimSpace(cwd) != "" {
+		values = append(values, "DSH_CWD="+cwd)
+	}
+	return values
+}
+
 func safeEnvironmentName(name string, allowed map[string]bool) bool {
 	return allowed[name] || strings.HasPrefix(name, "DSH_") || strings.HasPrefix(name, "DEEPSEEK_") || strings.HasPrefix(name, "SALAD_DSH_")
 }

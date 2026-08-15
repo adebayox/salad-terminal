@@ -133,15 +133,28 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 			if err := copyFileAtomic(runtimePath, previousRuntime, 0o700); err != nil {
 				return "", fmt.Errorf("backup existing harness runtime: %w", err)
 			}
-			if _, statErr := os.Stat(manifestPath); statErr == nil {
-				if err := copyFileAtomic(manifestPath, previousManifest, 0o600); err != nil {
-					return "", fmt.Errorf("backup existing harness install record: %w", err)
-				}
+		} else if os.IsNotExist(statErr) {
+			if err := removeIfPresent(previousRuntime); err != nil {
+				return "", fmt.Errorf("clear stale harness runtime backup: %w", err)
 			}
-			if _, statErr := os.Stat(filepath.Join(dir, "cordis.yml")); statErr == nil {
-				if err := copyFileAtomic(filepath.Join(dir, "cordis.yml"), previousConfig, 0o600); err != nil {
-					return "", fmt.Errorf("backup existing harness config: %w", err)
-				}
+		}
+		if _, statErr := os.Stat(manifestPath); statErr == nil {
+			if err := copyFileAtomic(manifestPath, previousManifest, 0o600); err != nil {
+				return "", fmt.Errorf("backup existing harness install record: %w", err)
+			}
+		} else if os.IsNotExist(statErr) {
+			if err := removeIfPresent(previousManifest); err != nil {
+				return "", fmt.Errorf("clear stale harness install backup: %w", err)
+			}
+		}
+		currentConfig := filepath.Join(dir, "cordis.yml")
+		if _, statErr := os.Stat(currentConfig); statErr == nil {
+			if err := copyFileAtomic(currentConfig, previousConfig, 0o600); err != nil {
+				return "", fmt.Errorf("backup existing harness config: %w", err)
+			}
+		} else if os.IsNotExist(statErr) {
+			if err := removeIfPresent(previousConfig); err != nil {
+				return "", fmt.Errorf("clear stale harness config backup: %w", err)
 			}
 		}
 	}
@@ -149,7 +162,7 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 		return "", fmt.Errorf("install runtime: %w", err)
 	}
 	if err := signMacOSMachO(runtimePath); err != nil {
-		_ = os.Remove(runtimePath)
+		_ = restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, "", manifestPath)
 		return "", err
 	}
 
@@ -163,11 +176,13 @@ func Install(sourceRuntime, sourceConfig string, force bool) (string, error) {
 	}
 	hash, err := fileSHA256(runtimePath)
 	if err != nil {
+		_ = restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, installedConfig, manifestPath)
 		return "", fmt.Errorf("hash installed runtime: %w", err)
 	}
 	record := installation{Runtime: runtimePath, Config: installedConfig, SHA256: hash, InstalledAt: time.Now().UTC()}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
+		_ = restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, installedConfig, manifestPath)
 		return "", err
 	}
 	if err := writeAtomic(manifestPath, append(data, '\n'), 0o600); err != nil {
@@ -214,42 +229,67 @@ func Rollback() (string, error) {
 	if _, err := os.Stat(runtimePath); err != nil {
 		return "", errors.New("no previous harness installation is available")
 	}
-	_, currentRuntime, _, err := installPaths()
+	_, currentRuntime, currentManifest, err := installPaths()
 	if err != nil {
 		return "", err
 	}
-	if err := copyFileAtomic(runtimePath, currentRuntime, 0o700); err != nil {
-		return "", fmt.Errorf("restore previous harness runtime: %w", err)
-	}
 	currentConfig := filepath.Join(filepath.Dir(runtimePath), "cordis.yml")
-	if _, err := os.Stat(configPath); err == nil {
-		if err := copyFileAtomic(configPath, currentConfig, 0o600); err != nil {
-			return "", fmt.Errorf("restore previous harness config: %w", err)
-		}
-	}
-	if _, err := os.Stat(manifestPath); err == nil {
-		if err := copyFileAtomic(manifestPath, filepath.Join(filepath.Dir(runtimePath), "install.json"), 0o600); err != nil {
-			return "", fmt.Errorf("restore previous harness install record: %w", err)
-		}
+	if err := restorePreviousInstall(runtimePath, configPath, manifestPath, currentRuntime, currentConfig, currentManifest); err != nil {
+		return "", fmt.Errorf("restore previous harness installation: %w", err)
 	}
 	return currentRuntime, nil
 }
 
 func restorePreviousInstall(previousRuntime, previousConfig, previousManifest, runtimePath, configPath, manifestPath string) error {
+	var firstErr error
 	if _, err := os.Stat(previousRuntime); err == nil {
 		if restoreErr := copyFileAtomic(previousRuntime, runtimePath, 0o700); restoreErr != nil {
-			return restoreErr
+			firstErr = restoreErr
 		}
+	} else if os.IsNotExist(err) {
+		if removeErr := removeIfPresent(runtimePath); removeErr != nil && firstErr == nil {
+			firstErr = removeErr
+		}
+	} else if firstErr == nil {
+		firstErr = err
 	}
-	if _, err := os.Stat(previousConfig); err == nil && configPath != "" {
-		if restoreErr := copyFileAtomic(previousConfig, configPath, 0o600); restoreErr != nil {
-			return restoreErr
+	if configPath != "" {
+		if _, err := os.Stat(previousConfig); err == nil {
+			if restoreErr := copyFileAtomic(previousConfig, configPath, 0o600); restoreErr != nil {
+				if firstErr == nil {
+					firstErr = restoreErr
+				}
+			}
+		} else if os.IsNotExist(err) {
+			if removeErr := removeIfPresent(configPath); removeErr != nil && firstErr == nil {
+				firstErr = removeErr
+			}
+		} else if firstErr == nil {
+			firstErr = err
 		}
 	}
 	if _, err := os.Stat(previousManifest); err == nil {
 		if restoreErr := copyFileAtomic(previousManifest, manifestPath, 0o600); restoreErr != nil {
-			return restoreErr
+			if firstErr == nil {
+				firstErr = restoreErr
+			}
 		}
+	} else if os.IsNotExist(err) {
+		if removeErr := removeIfPresent(manifestPath); removeErr != nil && firstErr == nil {
+			firstErr = removeErr
+		}
+	} else if firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
+func removeIfPresent(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
