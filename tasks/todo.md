@@ -505,6 +505,7 @@ Verified the workspace-tool flow across every tool-capable model family on live 
 - [ ] Do not call the engineer terminal production-ready until the four
   durable work items above have evidence. Normal Salad Chat remains outside
   the harness path and has no changed files.
+
 ### Loopback developer-flow correction (2026-08-15)
 
 - [x] Reproduced the real v0.2.15 developer flow from the exact installed
