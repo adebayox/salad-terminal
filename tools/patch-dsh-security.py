@@ -359,4 +359,11 @@ replace_once(
     "persistent terminal usage guidance",
 )
 
+replace_once(
+    acp_config,
+    """      Use the ordinary bash tool for short, bounded commands such as focused tests, formatting, git inspection, and builds. When setting a command environment, use an explicit form such as `env PORT=4321 npm run start` or a command-line flag, then verify the actual listener with terminal output and a separate request. If a command reports permission denied while binding localhost, explain that the run needs the explicit Salad Terminal loopback mode (`salad engineer --network loopback`) instead of retrying or claiming the server started. Never claim a command or verification succeeded without its tool output.""",
+    """      Use the ordinary bash tool for short, bounded commands such as focused tests, formatting, git inspection, and builds. When setting a command environment, use an explicit form such as `env PORT=4321 npm run start` or a command-line flag, then verify the actual listener with terminal output and a separate request. If a command reports permission denied while binding localhost, explain that the run needs the explicit Salad Terminal loopback mode (`salad engineer --network loopback`) instead of retrying or claiming the server started. Never claim a command or verification succeeded without its tool output. For a requested read-only review, use the bounded `subagent_fork` tool, wait for its returned result, and report the concrete finding. If it fails, times out, or returns no result, say so plainly and never invent reviewer approval. Do not retry the same failed edit indefinitely; after two unsuccessful attempts, stop and report the exact failure.""",
+    "reviewer honesty and bounded repair guidance",
+)
+
 print("Applied Salad Terminal security policy to pinned DeepSeek Harness source")
