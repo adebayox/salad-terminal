@@ -83,3 +83,15 @@ func TestEngineerCommandIsNotASecondTerminal(t *testing.T) {
 		t.Fatalf("run(engineer) error = %v", err)
 	}
 }
+
+func TestIntegratedTerminalProviderFlagRequiresOneValue(t *testing.T) {
+	for _, args := range [][]string{
+		{"--salad-provider"},
+		{"--salad-provider", "mistral", "extra"},
+	} {
+		err := run(args)
+		if err == nil || !strings.Contains(err.Error(), "salad --salad-provider <configured-provider>") {
+			t.Fatalf("run(%v) error = %v", args, err)
+		}
+	}
+}

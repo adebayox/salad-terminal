@@ -44,14 +44,13 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		if err := requireInteractive("salad"); err != nil {
-			return err
+		return runInteractiveTerminal("")
+	}
+	if args[0] == "--salad-provider" {
+		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
+			return errors.New("usage: salad --salad-provider <configured-provider>")
 		}
-		if err := ensureLatest(); err != nil {
-			return err
-		}
-		// Claude Code: bare launch = new session.
-		return tui.Run("")
+		return runInteractiveTerminal(strings.TrimSpace(args[1]))
 	}
 	cmd := args[0]
 	rest := args[1:]
@@ -307,6 +306,32 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; run `salad --help` to see available commands", cmd)
 	}
+}
+
+func runInteractiveTerminal(provider string) error {
+	if err := requireInteractive("salad"); err != nil {
+		return err
+	}
+	if err := ensureLatest(); err != nil {
+		return err
+	}
+	if provider != "" {
+		previous, hadPrevious := os.LookupEnv("SALAD_HARNESS_PROVIDER")
+		if err := os.Setenv("SALAD_HARNESS_PROVIDER", provider); err != nil {
+			return fmt.Errorf("select Salad workspace provider: %w", err)
+		}
+		defer func() {
+			if hadPrevious {
+				_ = os.Setenv("SALAD_HARNESS_PROVIDER", previous)
+			} else {
+				_ = os.Unsetenv("SALAD_HARNESS_PROVIDER")
+			}
+		}()
+	}
+	// One TUI owns both normal Salad Chat and trusted workspace turns. The
+	// provider override is read only by the workspace adapter; normal chat
+	// keeps its existing transport and provider selection.
+	return tui.Run("")
 }
 
 func requireInteractive(command string) error {
@@ -970,6 +995,8 @@ Chats:
 
 Workspace:
   salad workspace ...   Trust, inspect, or check the current repo
+  salad --salad-provider <name>
+                         Choose the configured provider for workspace turns
 
 Other:
   salad update          Install the latest release

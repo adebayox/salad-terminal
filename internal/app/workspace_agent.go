@@ -123,11 +123,11 @@ func humanizeWorkspaceError(err error) string {
 		return "This workspace request is too large. Ask Salad to work on one file or one smaller task at a time."
 	}
 	if strings.Contains(text, "provider") || strings.Contains(text, "http 502") || strings.Contains(text, "http 503") {
-		return "Salad's workspace model provider is unavailable. Set SALAD_HARNESS_PROVIDER to a configured provider and retry."
+		return "Salad's workspace model provider is unavailable. Retry with `salad --salad-provider <configured-provider>` or set SALAD_HARNESS_PROVIDER."
 	}
 	humanized := api.HumanizeError(err)
 	if humanized == "Salad is temporarily unavailable. Try again in a moment." {
-		return "Salad's workspace model provider is unavailable. Set SALAD_HARNESS_PROVIDER to a configured provider and retry."
+		return "Salad's workspace model provider is unavailable. Retry with `salad --salad-provider <configured-provider>` or set SALAD_HARNESS_PROVIDER."
 	}
 	return humanized
 }

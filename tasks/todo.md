@@ -30,6 +30,9 @@ the next implementation pass.
   diagnostic/support-only.
 - [x] Make carrier release tooling require Node.js 24 and the pinned Koffi
   lockfile version before it mutates/builds the DeepSeek checkout.
+- [x] Make workspace provider recovery usable from the one `salad` command:
+  `salad --salad-provider <configured-provider>` now selects an explicit
+  provider for trusted workspace turns without changing normal Salad Chat.
 - [ ] Prove OAuth login, inspect, edit, approve, test, failure, follow-up,
   resume, cancel, and normal Salad Chat journeys in real environments.
 - [ ] Ship only a pinned DSH source revision plus the exact Salad patch set,
@@ -86,6 +89,8 @@ the next implementation pass.
   current head `b321a80` passed run `31956770911`: Go formatting, all Go tests,
   terminal build, and release-script syntax checks passed. CI provisioned Go
   1.25 from `go.mod`; no local toolchain or dependency install was required.
+- The provider-selection recovery edit is on the next PR head and is awaiting
+  its remote CI result; no paid provider was used for verification.
 
 No implementation change is considered complete until the relevant item has a
 direct test or real-run artifact.
