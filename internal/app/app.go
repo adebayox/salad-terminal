@@ -214,7 +214,11 @@ func newModel(opts Options) model {
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	root, _ := workspace.ResolveRoot("")
-	workspaceMode := opts.WorkspaceMode || (opts.ChatID == "" && !opts.ForceResume && !opts.ForceContinue && workspace.LooksLikeProject(root))
+	// Explicit trust is the user's unambiguous opt-in to local workspace work.
+	// It must win even when a project has no conventional marker such as .git,
+	// go.mod, or package.json (for example a small Python or script project).
+	// Untrusted arbitrary directories still stay in normal Salad Chat.
+	workspaceMode := opts.WorkspaceMode || (opts.ChatID == "" && !opts.ForceResume && !opts.ForceContinue && (workspace.IsTrusted(root) || workspace.LooksLikeProject(root)))
 	if workspaceMode {
 		ta.Placeholder = "Message…  /trust · /chat for normal Salad chat"
 	}

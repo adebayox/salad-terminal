@@ -944,3 +944,15 @@ surface. They share presentation and safety policy but do not share transport.
 - [ ] Publish a new terminal release containing the carrier persona guidance
   that prevents malformed write/edit escalation arguments by default, then
   reinstall and repeat the unprompted file-operation smoke.
+
+### Trusted non-Git project workflow follow-up (2026-08-16)
+
+- [x] Reproduced that a trusted dependency-free Python folder with no `.git`
+  or conventional manifest opened the normal chat picker instead of the
+  workspace agent.
+- [x] Changed the TUI workspace decision so explicit trust is sufficient for
+  workspace mode; untrusted arbitrary directories still remain normal Salad
+  Chat. Added a regression test for the trusted non-project case.
+- [ ] Verify the published release with a real dependency-free inspect/edit/
+  test workflow through the unified TUI; no local Go/Node build is allowed
+  during the active disk-safety pause.
