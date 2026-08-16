@@ -155,6 +155,24 @@ if [[ "$target_platform" == "macos" ]]; then
   install -m 700 "$spawn_helper" "$output_dir/dsh-acp-agent-$release_platform-$release_arch-spawn-helper"
 fi
 install -m 600 examples/acp-agent/cordis.yml "$output_dir/cordis.yml"
+"$node_bin" - "$output_dir/cordis.yml" <<'NODE'
+const fs = require('node:fs')
+
+const configPath = process.argv[2]
+const marker = 'Do not retry the same failed edit indefinitely; after two unsuccessful attempts, stop and report the exact failure.'
+const instruction = `
+
+      For ordinary workspace reads, writes, and edits under the current workspace policy, omit both \`sandbox_permissions\` and \`justification\` from the tool arguments.
+      Only include those fields when you are retrying the exact operation after a real sandbox denial and the tool explicitly requires a wider mode; never request the current \`workspace-write\` mode as an escalation.`
+let config = fs.readFileSync(configPath, 'utf8')
+if (!config.includes(marker)) {
+  throw new Error('DeepSeek persona marker changed; review the carrier instruction patch')
+}
+if (!config.includes(instruction.trim())) {
+  config = config.replace(marker, marker + instruction)
+  fs.writeFileSync(configPath, config, { mode: 0o600 })
+}
+NODE
 "$node_bin" - "$output_dir" "$source_revision" "$patch_sha256" "$target" "$lock_sha256" "$node_version" "$pnpm_version" <<'NODE'
 const fs = require('node:fs')
 const path = require('node:path')
