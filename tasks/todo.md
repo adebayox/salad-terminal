@@ -82,6 +82,9 @@ the next implementation pass.
   It does not cover the current uncommitted provider-streaming edits, so it is
   evidence for the carrier path only, not a substitute for the remaining
   backend runtime verification.
+- Terminal hardening commit `d829e87` is now pushed to PR #21. That PR reports
+  no checks because this repository's only workflow is release/tag-triggered;
+  do not dispatch the write-enabled release workflow from the feature branch.
 
 No implementation change is considered complete until the relevant item has a
 direct test or real-run artifact.
