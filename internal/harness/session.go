@@ -48,6 +48,12 @@ type permissionResponse struct {
 	allow bool
 }
 
+// errPromptTimeout marks a prompt whose response stream can no longer be
+// safely reused. The carrier may still emit a late response after the client
+// deadline, so the persistent session is retired instead of allowing that
+// response to be mistaken for the next prompt's result.
+var errPromptTimeout = errors.New("ACP prompt timeout; session retired")
+
 // Session owns one ACP child and one ACP session. Prompt calls are serialized,
 // which matches ACP's turn model and prevents two terminal sends from being
 // interleaved inside one agent session.
@@ -364,6 +370,9 @@ func (s *Session) run(ctx context.Context, opts Options, ready chan<- error) {
 				command.result <- err
 				if err != nil {
 					s.emit(SessionEvent{Kind: "error", SessionID: sessionID, Err: err})
+					if errors.Is(err, errPromptTimeout) {
+						return
+					}
 				} else {
 					s.emit(SessionEvent{Kind: "turn_end", SessionID: sessionID})
 				}
@@ -395,7 +404,13 @@ func (s *Session) promptTurn(ctx context.Context, opts Options, sessionID, id, t
 		frame, err := read(promptCtx)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return fmt.Errorf("ACP prompt timed out after %s: %w", opts.PromptTimeout, err)
+				// ACP defines session/cancel as a notification. It is best effort:
+				// the session is retired below even when an older carrier ignores it.
+				_ = writeFrame(map[string]any{
+					"jsonrpc": "2.0", "method": "session/cancel",
+					"params": map[string]any{"sessionId": sessionID},
+				})
+				return fmt.Errorf("ACP prompt timed out after %s: %w", opts.PromptTimeout, errPromptTimeout)
 			}
 			return err
 		}
