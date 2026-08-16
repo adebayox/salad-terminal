@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  DEEPSEEK_HARNESS_REF: 47f943859bef60e4160492346772ded9b24f765a
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -36,3 +39,44 @@ jobs:
 
       - name: Check workflow YAML
         run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path); puts path }' .github/workflows/ci.yml .github/workflows/release.yml
+
+  harness-source-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Salad Terminal
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Install Linux sandbox dependency
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap
+
+      - name: Checkout pinned DeepSeek Harness
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/deepseek-ai/deepseek-harness.git "$RUNNER_TEMP/deepseek-harness"
+          git -C "$RUNNER_TEMP/deepseek-harness" checkout --detach "$DEEPSEEK_HARNESS_REF"
+          test "$(git -C "$RUNNER_TEMP/deepseek-harness" rev-parse HEAD)" = "$DEEPSEEK_HARNESS_REF"
+
+      - name: Build and smoke the patched carrier
+        run: |
+          set -euo pipefail
+          ./tools/build-dsh-acp-carrier.sh \
+            "$RUNNER_TEMP/deepseek-harness" \
+            node24-linux-x64 \
+            "$RUNNER_TEMP/dsh-dist"
+          mkdir -p smoke/unpack smoke/workspace
+          cp "$RUNNER_TEMP/dsh-dist/dsh-acp-agent-linux-amd64" smoke/unpack/
+          cp "$RUNNER_TEMP/dsh-dist/cordis.yml" smoke/unpack/
+          python3 tools/smoke-dsh-carrier.py \
+            --carrier "$PWD/smoke/unpack/dsh-acp-agent-linux-amd64" \
+            --config "$PWD/smoke/unpack/cordis.yml" \
+            --workspace "$PWD/smoke/workspace"
