@@ -103,6 +103,224 @@ replace_once(
 )
 replace_once(
     acp_server,
+    """  // Emit only committed assistant text. Raw chunks, reasoning, tools, plans,
+  // titles, and retry markers are presentation or trace data and stay off the
+  // automation wire.
+  ctx.on('session/event', (session, event: SessionEvent) => {
+    const record = sessions.get(session.header.id)
+    if (record === undefined || record.agent.session !== session) return
+    try {
+      if (event.type === 'assistant/message') {
+        for (const block of event.data.message.content) {
+          if (block.type === 'text' && block.text.length > 0) {
+            notify({
+              sessionId: record.agent.session.id,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: block.text },
+              },
+            })
+          } else if (block.type === 'image') {
+            notify({
+              sessionId: record.agent.session.id,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text: `[image attachment ${block.attachment.attachmentId}]`,
+                },
+              },
+            })
+          }
+        }
+      }
+    } finally {
+      const inflight = record.inflight
+      if (inflight !== undefined && event.type === 'turn/end' && inflight.turn === event.data.turn) {
+        if (event.data.reason.kind === 'error') {
+          // Model failures surface immediately as prompt errors; ordinary
+          // endings wait for whole-agent idle below.
+          record.inflight = undefined
+          rejectFromError(inflight, event.data.reason)
+        } else {
+          inflight.endReason = event.data.reason
+        }
+      }
+    }
+  })""",
+    """  const presentationCalls = new Map<SessionId, Map<string, {
+    name: string
+    rawInput: unknown
+    locations: Array<{ path: string }>
+  }>>()
+  const presentationLimit = 12_000
+  const redactPresentationText = (value: string): string => value
+    .replace(/(api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization)\\s*[:=]\\s*[\"']?[^,\\s\"'}]+/gi, '$1=[redacted]')
+    .replace(/\\bsk-[A-Za-z0-9_-]{8,}\\b/g, '[redacted]')
+    .slice(0, presentationLimit)
+
+  const safeToolInput = (raw: string): { value: unknown; locations: Array<{ path: string }> } => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return { value: {}, locations: [] }
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { value: {}, locations: [] }
+    }
+    const input = parsed as Record<string, unknown>
+    const safe: Record<string, unknown> = {}
+    const locations: Array<{ path: string }> = []
+    for (const key of ['path', 'file', 'cwd', 'command', 'query', 'pattern', 'glob']) {
+      const candidate = input[key]
+      if (typeof candidate !== 'string' || candidate.length === 0) continue
+      const value = redactPresentationText(candidate)
+      safe[key] = value
+      if ((key === 'path' || key === 'file') && value.length > 0) locations.push({ path: value })
+    }
+    return { value: safe, locations }
+  }
+
+  const toolKind = (name: string): string => {
+    const lower = name.toLowerCase()
+    if (/(read|list|stat|search|grep|find)/.test(lower)) return 'read'
+    if (/(write|edit|patch|create|apply)/.test(lower)) return 'edit'
+    if (/(delete|remove|unlink)/.test(lower)) return 'delete'
+    if (/(bash|shell|exec|command|terminal|job)/.test(lower)) return 'execute'
+    if (/(fetch|http|web)/.test(lower)) return 'fetch'
+    return 'other'
+  }
+
+  const resultText = (content: unknown): string => {
+    if (!Array.isArray(content)) return ''
+    return content
+      .filter((block): block is { type: string; text: string } =>
+        typeof block === 'object' && block !== null && (block as { type?: unknown }).type === 'text' && typeof (block as { text?: unknown }).text === 'string')
+      .map(block => redactPresentationText(block.text))
+      .join('\\n')
+      .slice(0, presentationLimit)
+  }
+
+  const emitToolCall = (sessionId: SessionId, data: { callId: string; name: string; arguments: string }): void => {
+    const parsed = safeToolInput(data.arguments)
+    let calls = presentationCalls.get(sessionId)
+    if (calls === undefined) {
+      calls = new Map()
+      presentationCalls.set(sessionId, calls)
+    }
+    calls.set(data.callId, { name: data.name, rawInput: parsed.value, locations: parsed.locations })
+    notify({
+      sessionId,
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: data.callId,
+        title: data.name,
+        kind: toolKind(data.name),
+        status: 'pending',
+        rawInput: parsed.value,
+        ...(parsed.locations.length > 0 ? { locations: parsed.locations } : {}),
+      },
+    } as unknown as SessionNotification)
+  }
+
+  const emitToolResult = (sessionId: SessionId, data: { callId: string; content: unknown; failed: boolean }): void => {
+    const call = presentationCalls.get(sessionId)?.get(data.callId)
+    const text = resultText(data.content)
+    notify({
+      sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: data.callId,
+        status: data.failed ? 'failed' : 'completed',
+        ...(call !== undefined && call.locations.length > 0 ? { locations: call.locations } : {}),
+        ...(text.length > 0 ? {
+          content: [{ type: 'content', content: { type: 'text', text } }],
+          rawOutput: { text },
+        } : {}),
+      },
+    } as unknown as SessionNotification)
+    presentationCalls.get(sessionId)?.delete(data.callId)
+  }
+
+  const emitPlan = (sessionId: SessionId, todos: readonly { content: string; status: string }[]): void => {
+    notify({
+      sessionId,
+      update: {
+        sessionUpdate: 'plan',
+        entries: todos.map(todo => ({
+          content: redactPresentationText(todo.content),
+          status: todo.status === 'completed' ? 'completed' : todo.status === 'in_progress' ? 'in_progress' : 'pending',
+          priority: 'medium',
+        })),
+      },
+    } as unknown as SessionNotification)
+  }
+
+  // The stock ACP bridge deliberately exposes only committed assistant text.
+  // Salad's engineer client needs standard ACP activity updates as well, so
+  // this carrier emits bounded, redacted tool and plan presentations while
+  // keeping the DSH session log as the source of truth.
+  ctx.on('session/event', (session, event: SessionEvent) => {
+    const record = sessions.get(session.header.id)
+    if (record === undefined || record.agent.session !== session) return
+    try {
+      if (event.type === 'tool/call') {
+        emitToolCall(record.agent.session.id, {
+          callId: String(event.data.callId),
+          name: event.data.name,
+          arguments: event.data.arguments,
+        })
+      } else if (event.type === 'tool/result') {
+        emitToolResult(record.agent.session.id, {
+          callId: String(event.data.message.source.callId),
+          content: event.data.message.content,
+          failed: event.data.error !== undefined || event.data.message.content.some(block => block.type === 'tool-result' && block.isError === true),
+        })
+      } else if (event.type === 'todo/write') {
+        emitPlan(record.agent.session.id, event.data.todos)
+      } else if (event.type === 'assistant/message') {
+        for (const block of event.data.message.content) {
+          if (block.type === 'text' && block.text.length > 0) {
+            notify({
+              sessionId: record.agent.session.id,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: redactPresentationText(block.text) },
+              },
+            })
+          } else if (block.type === 'image') {
+            notify({
+              sessionId: record.agent.session.id,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text: `[image attachment ${block.attachment.attachmentId}]`,
+                },
+              },
+            })
+          }
+        }
+      }
+    } finally {
+      const inflight = record.inflight
+      if (inflight !== undefined && event.type === 'turn/end' && inflight.turn === event.data.turn) {
+        if (event.data.reason.kind === 'error') {
+          // Model failures surface immediately as prompt errors; ordinary
+          // endings wait for whole-agent idle below.
+          record.inflight = undefined
+          rejectFromError(inflight, event.data.reason)
+        } else {
+          inflight.endReason = event.data.reason
+        }
+      }
+    }
+  })""",
+    "ACP rich activity event bridge",
+)
+replace_once(
+    acp_server,
     """        return { sessionId }
       },
 
@@ -146,6 +364,7 @@ replace_once(
         const record = sessions.get(sessionId)
         if (record === undefined) return {}
         sessions.delete(sessionId)
+        presentationCalls.delete(sessionId)
         record.agent.cancel({ kind: 'user' })
         settlePrompt(record, 'cancelled')
         await record.dispose()
@@ -154,6 +373,19 @@ replace_once(
 
       async prompt(params: PromptRequest): Promise<PromptResponse> {""",
     "ACP session restore and close handlers",
+)
+replace_once(
+    acp_server,
+    """    for (const record of records) {
+      record.agent.cancel({ kind: 'user' })
+      settlePrompt(record, 'cancelled')
+    }""",
+    """    for (const record of records) {
+      presentationCalls.delete(record.agent.session.id)
+      record.agent.cancel({ kind: 'user' })
+      settlePrompt(record, 'cancelled')
+    }""",
+    "ACP presentation state cleanup",
 )
 
 jsonrpc_server = root / "packages/sdk/server/src/server.ts"
@@ -355,15 +587,9 @@ replace_once(
 
       Use the persistent terminal tools for anything that may keep running: dev servers, watchers, REPLs, interactive commands, and commands expected to last longer than a short check. Use terminal_open, terminal_read, terminal_signal, and terminal_close so the process has an observable owner and is cleaned up. Use job_list, job_output, and job_kill when a background job is appropriate. Do not use `&`, nohup, disown, or an untracked background process for a dev server. After starting a long-running process, report the exact command, the tool/job id, the listening address if relevant, and an external verification result.
 
-      Use the ordinary bash tool for short, bounded commands such as focused tests, formatting, git inspection, and builds. When setting a command environment, use an explicit form such as `env PORT=4321 npm run start` or a command-line flag, then verify the actual listener with terminal output and a separate request. If a command reports permission denied while binding localhost, explain that the run needs the explicit Salad Terminal loopback mode (`salad engineer --network loopback`) instead of retrying or claiming the server started. Never claim a command or verification succeeded without its tool output.""",
-    "persistent terminal usage guidance",
+      Use the ordinary bash tool for short, bounded commands such as focused tests, formatting, git inspection, and builds. When setting a command environment, use an explicit form such as `env PORT=4321 npm run start` or a command-line flag, then verify the actual listener with terminal output and a separate request. If a command reports permission denied while binding localhost, explain that the run needs the explicit Salad Terminal loopback mode (`salad harness --network loopback`) instead of retrying or claiming the server started. Never claim a command or verification succeeded without its tool output. For a requested read-only review, use the bounded subagent_fork tool, wait for its returned result, and report the concrete finding. If it fails, times out, or returns no result, say so plainly and never invent reviewer approval. Do not retry the same failed edit indefinitely; after two unsuccessful attempts, stop and report the exact failure.""",
+    "persistent terminal, reviewer honesty, and bounded repair guidance",
 )
 
-replace_once(
-    acp_config,
-    """      Use the ordinary bash tool for short, bounded commands such as focused tests, formatting, git inspection, and builds. When setting a command environment, use an explicit form such as `env PORT=4321 npm run start` or a command-line flag, then verify the actual listener with terminal output and a separate request. If a command reports permission denied while binding localhost, explain that the run needs the explicit Salad Terminal loopback mode (`salad engineer --network loopback`) instead of retrying or claiming the server started. Never claim a command or verification succeeded without its tool output.""",
-    """      Use the ordinary bash tool for short, bounded commands such as focused tests, formatting, git inspection, and builds. When setting a command environment, use an explicit form such as `env PORT=4321 npm run start` or a command-line flag, then verify the actual listener with terminal output and a separate request. If a command reports permission denied while binding localhost, explain that the run needs the explicit Salad Terminal loopback mode (`salad engineer --network loopback`) instead of retrying or claiming the server started. Never claim a command or verification succeeded without its tool output. For a requested read-only review, use the bounded `subagent_fork` tool, wait for its returned result, and report the concrete finding. If it fails, times out, or returns no result, say so plainly and never invent reviewer approval. Do not retry the same failed edit indefinitely; after two unsuccessful attempts, stop and report the exact failure.""",
-    "reviewer honesty and bounded repair guidance",
-)
 
 print("Applied Salad Terminal security policy to pinned DeepSeek Harness source")

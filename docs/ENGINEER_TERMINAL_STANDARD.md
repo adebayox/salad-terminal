@@ -13,28 +13,32 @@ process on a developer's machine.
 DeepSeek Harness is an execution engine inside Salad Terminal. It is not a
 second terminal product and it is not a replacement for Salad Chat.
 
-The current repository has two product surfaces, but only one local-agent
-path for engineers:
+The terminal now has one user-facing surface. From a project, `salad` opens
+the existing TUI. Once the folder is trusted, the TUI starts the DeepSeek
+Harness ACP session behind that same prompt, transcript, approval screen, and
+cancel/exit flow. `/chat` switches that same TUI to an ordinary Salad Chat
+conversation when the user wants the web-shared chat path.
 
-1. The existing terminal chat path sends a normal Salad message. SaladBE runs
-   the model loop and sends local tool requests back to the terminal for
-   approval and execution.
-2. The engineer path (`salad engineer`) starts DeepSeek Harness locally. DSH owns the
-   model/tool loop and Salad provides the provider bridge and run receipts.
+Internally there are two adapters behind the surface:
 
-`salad harness` is a compatibility alias for one-shot runs and carrier
-management. It is not a second developer product. The engineer command keeps
-one ACP process alive for follow-up prompts; normal Salad Chat remains on its
-existing path and is not involved.
+1. The Salad Chat adapter sends a normal Salad message. SaladBE runs the
+   normal model loop and may send local tool requests back to the terminal.
+2. The workspace adapter starts DeepSeek Harness locally. DSH owns the
+   model/tool loop; Salad owns the TUI, workspace trust, provider bridge,
+   permission response, and lifecycle cleanup.
+
+`salad harness` remains a compatibility command for carrier installation,
+diagnostics, and low-level one-shot scripts. `salad engineer` is not a
+separate product path and is no longer advertised.
 
 Keeping Salad Chat outside the local-agent path is a deliberate safety
 boundary: the new runtime is isolated and cannot change normal chat. The
 runtime adapter is still a transition architecture, but the engineer now has
 one user-facing entry point.
 
-The finished product should have one terminal entry point and one shared
-workspace policy. The runtime behind it may be replaceable, but the developer
-should not have to understand which runtime is active.
+The finished product has one terminal entry point and one shared workspace
+policy. The runtime behind it may be replaceable, but the developer should not
+have to understand which runtime is active.
 
 ## Target system
 
@@ -101,11 +105,11 @@ The terminal reaches flow state only when the following are reliable:
 | Interactive processes and dev servers | Exact v0.2.16 macOS release passed external HTTP, same-process follow-up, and explicit close checks; native Linux x64/ARM64 packaged carriers now pass ACP boot/prompt smoke | Native Linux long-lived PTY/job proof remains open; Windows has no DSH carrier. A process is live only while its carrier session is alive |
 | Git branch/commit/PR workflow | Read-only inspection is present | Writes are explicit, reviewable, and recoverable |
 | Approval policy | Present in both paths, with different semantics | One policy model; low-risk auto-run, high-risk review |
-| Session resume | One `salad engineer` session accepts multiple prompts in one ACP process. The rebuilt macOS carrier and packaged native Linux x64/ARM64 carriers restore across two processes; mismatched workspaces are rejected | Windows native proof and replay/cancellation behavior remain open |
+| Session resume | One trusted-project `salad` TUI session accepts multiple prompts in one ACP process. The rebuilt macOS carrier and packaged native Linux x64/ARM64 carriers restore across two processes; mismatched workspaces are rejected | TUI-level resume/replay and Windows native proof remain open |
 | Background work/subagents | Corrected carrier source exposes DSH's `jobs` registry and `job_list`/`job_output`/`job_kill`; a real server was stopped through job control | Exact-release collaboration/job and native cross-platform cancellation evidence remain open |
 | Reconnect and replay | DSH persists an append-only session log and the CLI now persists run status/session ID; native Linux x64/ARM64 release smoke restored the same session in a fresh process after both a normal turn and a simulated provider 503. Terminal output is not replayed by Salad itself | Show saved run state and document that live output is re-rendered rather than replayed; add cancellation matrix |
 | Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; macOS loopback mode works; native Linux x64/ARM64 smoke proves bubblewrap external-network denial | Linux explicitly rejects loopback mode until a real bridge exists; prove credential/file parity on Linux and Windows and add domain-allowlisted external network flow |
-| Installation and update | Checksums, managed carrier, and Unix rollback exist; Windows atomic replacement is staged for the next release | Release the Windows rollback change and test failed-update recovery on native Windows; signed provenance remains open |
+| Installation and update | Checksums, managed carrier, Unix rollback, and tag-release provenance attestation are implemented | Run and verify the first attested release; test failed-update recovery on native Windows |
 | Cross-platform behavior | Archives build; DSH carrier is not on Windows | Product capability is explicit per platform, not surprising |
 | Evidence and observability | Basic run receipts and command output exist | Every claim links to command/test/file evidence |
 
@@ -138,6 +142,12 @@ The exact v0.2.15 release includes DSH's official persistent PTY and
 background-job plugins. It remains a narrowly labeled macOS-focused preview
 until native Linux sandbox proof, domain-level network controls, package trust,
 and the broader release workflow matrix are complete.
+
+Tagged releases now attest every archive named by `SHA256SUMS` using GitHub's
+signed build-provenance service. A consumer can verify a downloaded archive
+against the repository with `gh attestation verify <archive> -R
+adebayox/salad-terminal`; the first new tagged release must still be run and
+verified before this is counted as release evidence.
 
 ## Non-negotiable safety boundary
 

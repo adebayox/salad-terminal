@@ -1,5 +1,111 @@
 # Workspace tools harness (aligned with Salad CTO plan, 2026-07-20)
 
+## Current upstream evidence
+
+The official DeepSeek Harness repository still labels the project a developer
+preview, warns that compatibility-breaking changes are expected, and documents
+the MIT license and plugin-based Cordis architecture. That is why Salad keeps a
+commit pin, a shape-checked patch, a checksum, and a rollback artifact instead
+of tracking upstream `main` directly.
+
+## Unified terminal correction plan — 2026-08-16
+
+The previous preview proved that the DeepSeek Harness can run local work, but
+it did not prove an engineer-ready Salad experience. This plan is the gate for
+the next implementation pass.
+
+- [x] Keep one user-facing `salad` terminal; do not create a second engineer
+  terminal or change the normal Salad Chat transport.
+- [x] Put the workspace runtime behind a small adapter boundary so the normal
+  chat state machine does not own workspace process, approval, or session code.
+- [x] Carry safe work events through the DSH bridge: plan, tool started,
+  tool finished, file/change location, command output, approval, cancellation,
+  error, and final answer.
+- [x] Make the backend provider gateway enforce provider/model entitlement,
+  product quota, request and token limits, cancellation, and safe diagnostics.
+- [x] Preserve provider tool-round state, including DeepSeek reasoning state,
+  and provide real model streaming where the provider supports it.
+- [x] Remove stale user-facing `salad engineer` references from the audit
+  evidence; `salad` is the only terminal surface and `salad harness` is
+  diagnostic/support-only.
+- [x] Make carrier release tooling require Node.js 24 and the pinned Koffi
+  lockfile version before it mutates/builds the DeepSeek checkout.
+- [x] Make workspace provider recovery usable from the one `salad` command:
+  `salad --salad-provider <configured-provider>` now selects an explicit
+  provider for trusted workspace turns without changing normal Salad Chat.
+- [x] Add signed GitHub build-provenance attestation to tagged release archives
+  using the existing `SHA256SUMS` manifest; first tagged-release verification
+  remains open.
+- [x] Add a pull-request model-free Linux x64 build/smoke of the pinned,
+  security-patched DeepSeek carrier. The first run exposed and the source now
+  fixes a malformed shape-checked persona patch. The next run also exposed
+  that `--offline` made clean runners impossible; the builder now prefers the
+  cache while allowing a clean pinned dependency fetch. The clean-runner
+  carrier build and ACP smoke passed in CI run `31958133727` at commit
+  `0f4a10e`.
+- [ ] Prove OAuth login, inspect, edit, approve, test, failure, follow-up,
+  resume, cancel, and normal Salad Chat journeys in real environments.
+- [ ] Ship only a pinned DSH source revision plus the exact Salad patch set,
+  checksum, platform capability statement, and rollback path.
+- [x] Re-ran the focused terminal verification in pull-request CI with the
+  Go 1.25.0 toolchain selected from `go.mod`. Local Go 1.24.4 was not changed
+  because the active disk-safety rule prohibits local dependency/toolchain
+  installs; the remote matching toolchain is the authoritative verification
+  path for this pass.
+
+### Verification record — 2026-08-16
+
+- Added model-free ACP coverage for plan/tool-start/tool-finish events and
+  renders them as local workspace activity in the same Salad TUI transcript.
+- Removed the full-width room header background that rendered as the long white
+  bar in terminals with no reliable light/dark palette.
+- Tightened the child environment from prefix-based forwarding to an exact
+  allowlist; arbitrary `DSH_*`, `DEEPSEEK_*`, and Salad credential variables no
+  longer cross into the harness process.
+- Added clearer client recovery messages for provider key/model, quota, and
+  request-size failures. The backend handler tests covering request shape,
+  tool-round shape, model allowlisting, and explicit unsupported reasoning
+  state passed before the latest streaming edits; the latest backend changes
+  are not locally compiled during the dependency-download pause.
+- Terminal package tests pass for `internal/harness` and `internal/app`; the
+  terminal binary builds and its doctor/help/trust paths work.
+- A clean pinned DSH worktree accepts the shape-checked Salad patch. The
+  installed macOS carrier is checksum-verified and the real free-provider
+  flow works, but a newly compiled carrier from the patched source is not
+  claimed here because the checkout has no dependencies and local dependency
+  downloads are paused.
+- Real free Mistral verification completed in a disposable Go project:
+  inspect, edit, run a failing test, resume the same session, edit the test,
+  and run a passing test. The run list shows both turns sharing one DSH
+  session. A separate Groq probe reached the provider and returned a 502,
+  which is surfaced as a provider failure rather than a false success.
+- Real token-by-token provider streaming and provider-specific reasoning-state
+  continuation are now implemented at the Salad gateway boundary; the
+  carrier still needs a fresh patched build and the desktop OAuth callback
+  still needs a real terminal journey. Normal Salad Chat transport remains
+  untouched by this work.
+- Static review passed after the streaming/reasoning edits (`gofmt`, shell and
+  patch-script syntax checks, diff checks, and provider type-shape inspection).
+  The Data volume currently reports about 10 GiB free, but local runtime
+  verification remains paused by the active disk-safety instruction. Use
+  existing CI or a prepared, matching toolchain for the remaining runtime
+  gates.
+- Existing CI evidence: release run `31890011530` completed successfully for
+  the pinned carrier/job fix at commit `a09460bb117a76ed1b3c4f804296af24063f7ced`.
+  It does not cover the current uncommitted provider-streaming edits, so it is
+  evidence for the carrier path only, not a substitute for the remaining
+  backend runtime verification.
+- Terminal hardening and read-only pull-request CI are pushed to PR #21. The
+  current head `0f4a10e` passed run `31958133727`: Go formatting, all Go tests,
+  terminal build, release-script syntax checks, and the clean pinned DSH
+  carrier build/ACP smoke passed. CI provisioned Go 1.25 from `go.mod`; no
+  local toolchain or dependency install was required.
+- The provider-selection recovery edit and release-script fixes are covered by
+  that remote run; no paid provider was used for verification.
+
+No implementation change is considered complete until the relevant item has a
+direct test or real-run artifact.
+
 ## Follow-up release blocker — account creation keyboard path
 
 - [x] Reproduce the documented `c` action from the initial sign-in screen; it incorrectly entered `c` into the email field.
@@ -764,3 +870,62 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   resolve the server-selected engineer provider for accounts where the
   default OpenAI route still returns 502. Keep provider selection explicit;
   do not silently switch providers.
+## Unified Salad Terminal architecture correction (2026-08-16)
+
+The previous preview exposed `salad engineer` as a separate user-facing path.
+That is not the intended product. Salad Terminal must remain one terminal
+experience; DeepSeek Harness is an internal execution engine for workspace
+turns, not a second command developers must learn.
+
+Plan before implementation:
+
+- [x] Keep one primary user entry point: `salad` from a repository.
+- [x] Keep normal Salad Chat transport and web-shared conversations intact;
+  no harness prompt, tool call, or receipt may enter the normal message/router
+  path.
+- [x] Add a shared terminal session adapter so the existing TUI owns prompt
+  entry, transcript, approvals, cancellation, and exit while the DSH ACP
+  process owns the model/tool loop for trusted workspace turns.
+- [x] Make the workspace decision visible and safe: an untrusted project shows
+  a trust gate; `/chat` explicitly opens normal Salad Chat, while trusted
+  repository prompts use the harness behind the same TUI.
+- [x] Keep carrier installation, doctor, rollback, and low-level compatibility
+  commands internal/diagnostic; remove `salad engineer` from the normal help
+  and documentation.
+- [x] Preserve an explicit, clearly labeled way to open a normal Salad chat
+  from the same terminal without creating a second terminal product.
+- [ ] Verify one real TUI journey: trust workspace -> inspect -> edit approval
+  -> run test approval -> follow-up -> clean exit, plus a separate normal chat
+  control proving no normal-chat transport changes.
+
+Implementation evidence so far:
+
+- [x] Added `internal/harness.Session`, a client-owned ACP session with prompt,
+  streamed assistant events, permission responses, cancellation, and cleanup.
+- [x] Added the workspace adapter behind the existing Bubble Tea model; the
+  TUI owns the composer, transcript, approval screen, `/chat` escape hatch,
+  and shutdown while DSH owns the local model/tool loop.
+- [x] Bare `salad` detects project folders, shows a trust gate, and starts the
+  integrated workspace session after `/trust`; untrusted/non-project flows
+  remain available as normal Salad Chat.
+- [x] Removed `salad engineer` from normal help and made the old command fail
+  with a migration message instead of starting a second runtime.
+- [x] Added fake-ACP session and UI boundary tests; `go test ./...`, `go vet
+  ./...`, and `git diff --check` pass.
+- [x] Added repeated approval-race and close-while-permission tests; 30
+  repetitions pass, and the session now cancels safely instead of dropping a
+  fast approval or hanging on shutdown.
+- [x] Final verification passes: `go test ./... -count=1`, targeted race tests,
+  `go vet ./...`, `go build ./cmd/salad`, help/migration checks, and
+  `git diff --check`.
+- [x] Real TUI smoke reached `Salad Terminal · salad-unified-smoke` and
+  `Workspace agent ready` in a trusted disposable Go project.
+- [ ] Real authenticated model turn through the unified TUI is pending because
+  the local Salad session expired; the observed provider request returned HTTP
+  401. Re-authentication is required for final live inspect/edit/test proof.
+
+Open verification work item: `work-c4c9e7b6915b`.
+
+Architecture decision: one binary, one TUI, one user-facing session surface;
+two internal adapters (Salad Chat and DSH workspace execution) behind the
+surface. They share presentation and safety policy but do not share transport.

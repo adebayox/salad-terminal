@@ -37,6 +37,14 @@ func Header() lipgloss.Style {
 		Padding(0, 1)
 }
 
+// HeaderLine is used inside the room view. A full-width background there can
+// render as a distracting white bar in terminals that do not expose the
+// user's dark/light palette, while the room itself already supplies the
+// visual separation.
+func HeaderLine() lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(Ink).Padding(0, 1)
+}
+
 func Footer() lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(Muted).Padding(0, 1)
 }

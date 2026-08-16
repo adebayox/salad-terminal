@@ -63,8 +63,8 @@ confirmed on port 4322, Salad Terminal received Ctrl-C, the run became
   provide a usable loopback interface, so Linux rejects that mode instead of
   silently running a broken local-server flow. The authenticated provider
   bridge also completed a real model turn through the candidate carrier.
-- `salad engineer resume <run-id>` restored the same ACP conversation in a
-  second process. The terminal conversation resumed, but the old OS process
+- `salad` resumed the same ACP conversation in a second process from the
+  trusted project. The terminal conversation resumed, but the old OS process
   did not: closing the carrier correctly cleans up child processes. This is a
   resume boundary, not durable dev-server ownership.
 
@@ -73,8 +73,9 @@ confirmed on port 4322, Salad Terminal received Ctrl-C, the run became
 - Run records now persist `starting`, `running`, `completed`, `failed`, and
   `cancelled` state, timestamps, errors, and the actual ACP session ID as soon
   as the carrier identifies it.
-- `salad engineer runs` lists saved runs for the current workspace, and
-  `salad engineer resume <run-id>` is documented as a first-class workflow.
+- Saved run inspection and low-level continuation are available through
+  `salad harness runs` and `salad harness resume`; these are support and
+  diagnostics commands behind the one user-facing `salad` terminal.
 - The pinned DSH carrier build now mounts the upstream `dsh-terminal` and
   `dsh-jobs` plugin families. The patch script was run against a fixture with
   every pinned source seam and produced the expected terminal/job entries.

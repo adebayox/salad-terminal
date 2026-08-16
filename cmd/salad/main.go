@@ -44,14 +44,13 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		if err := requireInteractive("salad"); err != nil {
-			return err
+		return runInteractiveTerminal("")
+	}
+	if args[0] == "--salad-provider" {
+		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
+			return errors.New("usage: salad --salad-provider <configured-provider>")
 		}
-		if err := ensureLatest(); err != nil {
-			return err
-		}
-		// Claude Code: bare launch = new session.
-		return tui.Run("")
+		return runInteractiveTerminal(strings.TrimSpace(args[1]))
 	}
 	cmd := args[0]
 	rest := args[1:]
@@ -83,7 +82,7 @@ func run(args []string) error {
 			printCommandUsage("engineer")
 			return nil
 		}
-		return runEngineer(rest)
+		return errors.New("salad engineer is no longer a separate terminal; run `salad` from the project directory")
 	case "update":
 		if hasHelp(rest) {
 			printCommandUsage("update")
@@ -309,6 +308,32 @@ func run(args []string) error {
 	}
 }
 
+func runInteractiveTerminal(provider string) error {
+	if err := requireInteractive("salad"); err != nil {
+		return err
+	}
+	if err := ensureLatest(); err != nil {
+		return err
+	}
+	if provider != "" {
+		previous, hadPrevious := os.LookupEnv("SALAD_HARNESS_PROVIDER")
+		if err := os.Setenv("SALAD_HARNESS_PROVIDER", provider); err != nil {
+			return fmt.Errorf("select Salad workspace provider: %w", err)
+		}
+		defer func() {
+			if hadPrevious {
+				_ = os.Setenv("SALAD_HARNESS_PROVIDER", previous)
+			} else {
+				_ = os.Unsetenv("SALAD_HARNESS_PROVIDER")
+			}
+		}()
+	}
+	// One TUI owns both normal Salad Chat and trusted workspace turns. The
+	// provider override is read only by the workspace adapter; normal chat
+	// keeps its existing transport and provider selection.
+	return tui.Run("")
+}
+
 func requireInteractive(command string) error {
 	if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
 		return nil
@@ -320,11 +345,7 @@ func runHarness(args []string) error {
 	return runHarnessMode(args, false)
 }
 
-func runEngineer(args []string) error {
-	return runHarnessMode(args, true)
-}
-
-func validateEngineerNetworkMode(networkMode, platform string) error {
+func validateHarnessNetworkMode(networkMode, platform string) error {
 	if networkMode != "deny" && networkMode != "loopback" && networkMode != "allow" {
 		return fmt.Errorf("unsupported harness network mode %q; choose deny, loopback, or allow", networkMode)
 	}
@@ -336,9 +357,6 @@ func validateEngineerNetworkMode(networkMode, platform string) error {
 
 func runHarnessMode(args []string, interactive bool) error {
 	surface := "salad harness"
-	if interactive {
-		surface = "salad engineer"
-	}
 	if len(args) > 0 && args[0] == "runs" {
 		if len(args) != 1 {
 			return fmt.Errorf("usage: %s runs", surface)
@@ -372,7 +390,7 @@ func runHarnessMode(args []string, interactive bool) error {
 			return err
 		}
 		if record.Status == "starting" || record.Status == "running" {
-			return fmt.Errorf("cannot resume active run %q; close the existing Salad engineer process first", record.ID)
+			return fmt.Errorf("cannot resume active run %q; close the existing Salad Terminal process first", record.ID)
 		}
 		root, err := workspace.ResolveRoot("")
 		if err != nil || root != record.Workspace {
@@ -447,9 +465,9 @@ func runHarnessMode(args []string, interactive bool) error {
 		return fmt.Errorf("unsupported harness protocol %q; choose acp or jsonrpc", protocol)
 	}
 	if interactive && protocol != "acp" {
-		return errors.New("salad engineer uses the ACP session runtime; jsonrpc is available only through `salad harness`")
+		return errors.New("Salad Terminal interactive mode uses the ACP session runtime; jsonrpc is available only through `salad harness`")
 	}
-	if err := validateEngineerNetworkMode(networkMode, runtime.GOOS); err != nil {
+	if err := validateHarnessNetworkMode(networkMode, runtime.GOOS); err != nil {
 		return err
 	}
 	parentNetworkMode := strings.ToLower(strings.TrimSpace(os.Getenv("DSH_NETWORK_MODE")))
@@ -500,7 +518,7 @@ func runHarnessMode(args []string, interactive bool) error {
 			return fmt.Errorf("the managed Salad Harness install is invalid; run `salad harness doctor`: %w", installErr)
 		}
 		if !installed {
-			return errors.New("engineer mode is not installed on this platform; install the macOS/Linux Salad Terminal package with its Harness carrier, or pass --command for a development runtime")
+			return errors.New("the Salad Terminal workspace runtime is not installed on this platform; install the macOS/Linux Salad Terminal package with its Harness carrier, or pass --command for a development runtime")
 		}
 	}
 	opts := harness.Options{
@@ -541,7 +559,7 @@ func runHarnessMode(args []string, interactive bool) error {
 	workspaceID, _ := workspace.OpaqueID(root)
 	runPrefix := "salad-harness"
 	if interactive {
-		runPrefix = "salad-engineer"
+		runPrefix = "salad-terminal"
 	}
 	runID := fmt.Sprintf("%s-%d", runPrefix, time.Now().UnixNano())
 	if protocol == "jsonrpc" && sessionID == "" {
@@ -565,14 +583,10 @@ func runHarnessMode(args []string, interactive bool) error {
 		}
 	}
 	opts.SessionID = sessionID
-	displayName := "harness"
-	if interactive {
-		displayName = "engineer"
-	}
-	fmt.Printf("[%s] run id: %s\n", displayName, runID)
+	fmt.Printf("[salad] run id: %s\n", runID)
 	recordPrompt := strings.Join(prompt, " ")
 	if recordPrompt == "" {
-		recordPrompt = "(interactive engineer session)"
+		recordPrompt = "(interactive Salad Terminal session)"
 	}
 	now := time.Now().UTC()
 	runRecord := harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: recordPrompt, StartedAt: now, UpdatedAt: now, Status: "starting", ResumeOf: resumeOf}
@@ -661,7 +675,7 @@ func listHarnessRuns() error {
 		return err
 	}
 	found := 0
-	fmt.Printf("Saved Salad engineer runs for %s\n", root)
+	fmt.Printf("Saved Salad Terminal runs for %s\n", root)
 	for _, record := range runs {
 		if record.Workspace != root {
 			continue
@@ -685,7 +699,7 @@ func listHarnessRuns() error {
 		fmt.Println("  No saved runs for this workspace.")
 		return nil
 	}
-	fmt.Println("Resume with: salad engineer resume <run-id>")
+	fmt.Println("Resume with: salad harness resume <run-id>")
 	return nil
 }
 
@@ -981,12 +995,13 @@ Chats:
 
 Workspace:
   salad workspace ...   Trust, inspect, or check the current repo
+  salad --salad-provider <name>
+                         Choose the configured provider for workspace turns
 
 Other:
   salad update          Install the latest release
   salad version         Show the installed version
   salad doctor          Check sign-in, API, and workspace setup
-  salad engineer        Work with an agent in this trusted workspace
 
 Run salad <command> --help for command details.
 `, Version)
@@ -1079,35 +1094,8 @@ or change your normal Salad chat. "salad harness doctor" checks the setup.
   --chat <id>             Opt in to lifecycle receipts for this chat
 `)
 	case "engineer":
-		fmt.Print(`Usage: salad engineer [prompt]
-       salad engineer resume <run-id> [prompt]
-       salad engineer runs
-
-Work with an agent in the trusted current workspace. With no prompt, Salad
-keeps one session open so you can inspect, edit, test, and follow up without
-starting over. Press Ctrl-D to finish the session; Ctrl-C cancels the active
-run and cleans up its child processes.
-
-The normal Salad chat is a separate product path and is not used by this
-command. Network access is denied by default. To request it for this run:
-
-  salad engineer --network allow
-
-Provider and runtime options:
-
-  --salad-provider <name>  Choose the Salad model provider for this run
-  --model <name>           Override the model sent to the provider
-  --network <mode>         deny (default), loopback, or allow
-
-If the server-selected provider is unavailable, retry with an explicitly
-configured provider or set SALAD_HARNESS_PROVIDER. Salad does not silently
-switch providers because that can change cost, privacy, and tool behavior.
-
-Use "salad engineer runs" to see saved local sessions for this workspace,
-then "salad engineer resume <run-id>" to continue one later. Resume only after
-the earlier engineer process has ended; a live PTY/dev server belongs to the
-current process and is not carried into a new one.
-`)
+		fmt.Println("`salad engineer` is no longer a separate terminal.")
+		fmt.Println("Run `salad` from your project directory; trust it with `/trust` when prompted.")
 	case "doctor":
 		fmt.Println("Usage: salad doctor")
 		fmt.Println("Check the local install, sign-in, Salad API, and current workspace.")

@@ -83,6 +83,91 @@ func TestRunACPInteractiveKeepsOneSessionAcrossPrompts(t *testing.T) {
 	}
 }
 
+func TestStartSessionStreamsIntoClientAndAcceptsPermission(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := StartSession(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACP"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp"},
+	})
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+	defer session.Close()
+
+	promptDone := make(chan error, 1)
+	go func() { promptDone <- session.Prompt(ctx, "Make a safe change") }()
+
+	var gotAssistant, gotPermission, gotPlan, gotToolStart, gotToolEnd bool
+	for !(gotAssistant && gotPermission && gotPlan && gotToolStart && gotToolEnd) {
+		select {
+		case event := <-session.Events():
+			switch event.Kind {
+			case "permission":
+				gotPermission = true
+				session.RespondPermission(event.PermissionID, false)
+			case "assistant":
+				gotAssistant = strings.Contains(event.Text, "ACP fake response")
+			case "plan":
+				gotPlan = len(event.Plan) == 1 && event.Plan[0].Content == "Inspect the project"
+			case "tool_start":
+				gotToolStart = event.ToolName == "read_file" && strings.Contains(event.ToolInput, "main.go")
+			case "tool_end":
+				gotToolEnd = event.ToolStatus == "completed" && strings.Contains(event.ToolOutput, "file contents")
+			}
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for session events")
+		}
+	}
+	if err := <-promptDone; err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+}
+
+func TestStartSessionCloseCancelsPendingPermission(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := StartSession(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACP"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp"},
+	})
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+
+	promptDone := make(chan error, 1)
+	go func() { promptDone <- session.Prompt(ctx, "Close while approval is open") }()
+	select {
+	case event := <-session.Events():
+		if event.Kind == "ready" {
+			select {
+			case event = <-session.Events():
+			case <-ctx.Done():
+				t.Fatal("timed out waiting for permission")
+			}
+		}
+		if event.Kind != "permission" {
+			t.Fatalf("first non-ready event = %#v, want permission", event)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for permission")
+	}
+
+	started := time.Now()
+	session.Close()
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("Close() took %s while permission was pending", elapsed)
+	}
+	select {
+	case err := <-promptDone:
+		if err == nil {
+			t.Fatal("Prompt() succeeded after the session was closed")
+		}
+	case <-ctx.Done():
+		t.Fatal("Prompt() did not return after Close()")
+	}
+}
+
 func TestRunACPStartsFreshWhenSessionIDWasNotRequested(t *testing.T) {
 	var output strings.Builder
 	var callbackSession string
@@ -146,13 +231,16 @@ func TestDecodeFrameRejectsMalformedAndOversized(t *testing.T) {
 }
 
 func TestScrubbedEnvironment(t *testing.T) {
-	env := scrubbedEnvironment([]string{"SALAD_ACCESS_TOKEN=do-not-forward", "SALAD_REFRESH_TOKEN=do-not-forward", "DEEPSEEK_API_KEY=explicit-runtime-key", "DSH_CORDIS_CONFIG=/tmp/config.yml"})
+	env := scrubbedEnvironment([]string{"SALAD_ACCESS_TOKEN=do-not-forward", "SALAD_REFRESH_TOKEN=do-not-forward", "DEEPSEEK_API_KEY=explicit-runtime-key", "DEEPSEEK_INTERNAL_SECRET=do-not-forward", "DSH_SECRET=do-not-forward", "DSH_CORDIS_CONFIG=/tmp/config.yml"})
 	joined := strings.Join(env, "\n")
 	if strings.Contains(joined, "do-not-forward") {
 		t.Fatalf("Salad credential leaked: %q", joined)
 	}
 	if !strings.Contains(joined, "DEEPSEEK_API_KEY=explicit-runtime-key") || !strings.Contains(joined, "DSH_CORDIS_CONFIG=/tmp/config.yml") {
 		t.Fatalf("runtime configuration missing: %q", joined)
+	}
+	if strings.Contains(joined, "DEEPSEEK_INTERNAL_SECRET") || strings.Contains(joined, "DSH_SECRET") {
+		t.Fatalf("arbitrary prefixed secret reached child: %q", joined)
 	}
 }
 
@@ -264,6 +352,24 @@ func TestHarnessFakeACP(t *testing.T) {
 			if json.Unmarshal(scanner.Bytes(), &decision) != nil {
 				return
 			}
+			_ = encoder.Encode(map[string]any{
+				"jsonrpc": "2.0", "method": "session/update",
+				"params": map[string]any{"sessionId": "fake-acp-session", "update": map[string]any{
+					"sessionUpdate": "plan", "entries": []map[string]string{{"content": "Inspect the project", "status": "in_progress", "priority": "medium"}},
+				}},
+			})
+			_ = encoder.Encode(map[string]any{
+				"jsonrpc": "2.0", "method": "session/update",
+				"params": map[string]any{"sessionId": "fake-acp-session", "update": map[string]any{
+					"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "read_file", "kind": "read", "status": "pending", "rawInput": map[string]string{"path": "main.go", "secret": "do-not-show"},
+				}},
+			})
+			_ = encoder.Encode(map[string]any{
+				"jsonrpc": "2.0", "method": "session/update",
+				"params": map[string]any{"sessionId": "fake-acp-session", "update": map[string]any{
+					"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed", "content": []map[string]any{{"type": "content", "content": map[string]string{"type": "text", "text": "file contents"}}},
+				}},
+			})
 			_ = encoder.Encode(map[string]any{
 				"jsonrpc": "2.0", "method": "session/update",
 				"params": map[string]any{"sessionId": "fake-acp-session", "update": map[string]any{
