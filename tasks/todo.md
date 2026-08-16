@@ -929,3 +929,18 @@ Open verification work item: `work-c4c9e7b6915b`.
 Architecture decision: one binary, one TUI, one user-facing session surface;
 two internal adapters (Salad Chat and DSH workspace execution) behind the
 surface. They share presentation and safety policy but do not share transport.
+
+### Free-provider live QA and carrier follow-up (2026-08-16)
+
+- [x] Published and installed terminal v0.2.24; the trusted repository path
+  enters the integrated DeepSeek Harness workspace mode.
+- [x] Reproduced the first free-Mistral failure against staging and traced it
+  to DSH's observed `max_tokens=256000` exceeding the gateway's request limit;
+  the gateway now accepts that bounded carrier envelope and caps the effective
+  provider request at 32768 tokens.
+- [x] Verified the same free-Mistral prompt returns `OK` through staging and
+  verified an isolated project write/read when the model omits invalid
+  escalation fields.
+- [ ] Publish a new terminal release containing the carrier persona guidance
+  that prevents malformed write/edit escalation arguments by default, then
+  reinstall and repeat the unprompted file-operation smoke.
