@@ -818,7 +818,7 @@ Implementation evidence so far:
   the local Salad session expired; the observed provider request returned HTTP
   401. Re-authentication is required for final live inspect/edit/test proof.
 
-Open verification work item: `work-b84574d78e00`.
+Open verification work item: `work-c4c9e7b6915b`.
 
 Architecture decision: one binary, one TUI, one user-facing session surface;
 two internal adapters (Salad Chat and DSH workspace execution) behind the

@@ -1,7 +1,8 @@
 # Unified Salad Terminal verification
 
 Date: 2026-08-16
-Commits: `9c8290a`, `6961877`
+Terminal release branch: `5fb65d6` (`codex/unified-terminal-harness`)
+Backend release dependency: `54589ae` / PR `adebayox/saladBE#107`
 
 ## Verified locally
 
@@ -33,10 +34,11 @@ Commits: `9c8290a`, `6961877`
 The live model-backed inspect/edit/test journey is not signed off yet. The
 local Salad auth session expired; the provider bridge returned HTTP 401. The
 correct recovery is `salad login`, not changing providers. Tracked as Luna
-work item `work-b84574d78e00`.
+work item `work-c4c9e7b6915b`.
 
 The live sign-in trace also found a cross-repository release dependency: the
 terminal sends a loopback callback, while the deployed backend currently falls
-back to the web login-success page. An isolated backend patch (`a81ef46`) adds
-the narrowly scoped loopback callback allowlist; it must be reviewed and
-deployed with the terminal release before live auth verification can pass.
+back to the web login-success page. Backend PR `adebayox/saladBE#107` adds the
+state-preserving desktop callback and strict loopback validation; it must be
+merged and deployed with the terminal release before live auth verification
+can pass.
