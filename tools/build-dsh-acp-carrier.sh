@@ -158,7 +158,7 @@ install -m 600 examples/acp-agent/cordis.yml "$output_dir/cordis.yml"
 "$node_bin" - "$output_dir" "$source_revision" "$patch_sha256" "$target" "$lock_sha256" "$node_version" "$pnpm_version" <<'NODE'
 const fs = require('node:fs')
 const path = require('node:path')
-const [, outputDir, sourceRevision, patchSHA256, target, lockSHA256, nodeVersion, pnpmVersion] = process.argv
+const [, , outputDir, sourceRevision, patchSHA256, target, lockSHA256, nodeVersion, pnpmVersion] = process.argv
 fs.writeFileSync(path.join(outputDir, 'BUILD-METADATA'), [
   `DSH_SOURCE_REVISION=${sourceRevision}`,
   `SALAD_PATCH_SHA256=${patchSHA256}`,
