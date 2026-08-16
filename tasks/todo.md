@@ -85,6 +85,10 @@ the next implementation pass.
 - Terminal hardening commit `d829e87` is now pushed to PR #21. That PR reports
   no checks because this repository's only workflow is release/tag-triggered;
   do not dispatch the write-enabled release workflow from the feature branch.
+- Added read-only pull-request CI and verified head `720eb80` in run
+  `31956659906`: Go formatting, all Go tests, terminal build, and release-script
+  syntax checks passed. CI provisioned Go 1.25 from `go.mod`; no local
+  toolchain or dependency install was required.
 
 No implementation change is considered complete until the relevant item has a
 direct test or real-run artifact.
