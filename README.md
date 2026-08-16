@@ -35,6 +35,18 @@ The installer checks the SHA-256 checksum and puts `salad.exe` in
 
 ## Engineer mode
 
+There is one Salad Terminal binary with two explicit modes:
+
+- `salad` opens a normal Salad chat, shared with Salad web.
+- `salad engineer` opens the codebase agent. It is the mode for inspecting,
+  editing, testing, and running the repository.
+
+The normal chat screen is labeled `Salad chat` so it is not mistaken for the
+codebase agent. If the server-selected engineer provider is unavailable,
+choose a configured provider explicitly, for example:
+
+    salad engineer --salad-provider xai
+
 The `salad engineer` command runs an agent in the trusted repository you
 choose. It keeps one local session open for follow-up prompts and is separate
 from normal Salad chat; prompts and tool calls do not go through normal chat

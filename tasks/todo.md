@@ -746,3 +746,21 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   path clearer. OpenAI's current default route returned 502 in this audit,
   while explicit xAI succeeded. Do not silently fail over between providers or
   route engineer work through normal Salad Chat.
+
+### VS Code terminal UX reality check (2026-08-16)
+
+- [x] Reproduced the user's exact installed v0.2.21 command in the actual
+  /Users/davidnifemi/code/saladBE workspace. salad engineer without an
+  explicit provider still fails with DeepSeek API error (HTTP 502);
+  salad engineer --salad-provider xai completes a real read-only workspace
+  inspection and exits cleanly.
+- [x] Identified the screenshot's long white line as the normal terminal chat
+  header painting its light background across a dark VS Code terminal. The
+  terminal theme now uses adaptive light/dark colors, the header explicitly
+  says Salad chat, and the footer points codebase work to salad engineer.
+- [x] Added a regression test for the normal-chat header/footer mode boundary.
+  Normal web Salad Chat and the SaladBE source repository were not modified.
+- [ ] Required release follow-up: publish this terminal-only UX fix and
+  resolve the server-selected engineer provider for accounts where the
+  default OpenAI route still returns 502. Keep provider selection explicit;
+  do not silently switch providers.

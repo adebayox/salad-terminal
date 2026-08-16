@@ -2352,7 +2352,7 @@ func relativeTime(t time.Time) string {
 
 func (m model) viewRoom() string {
 	w := max(m.width, 60)
-	header := theme.Header().Width(w).Render(theme.Mark() + "  ·  " + displayChatTitle(m.chatTitle))
+	header := theme.Header().Width(w).Render(theme.Mark() + "  ·  Salad chat  ·  " + displayChatTitle(m.chatTitle))
 	people := theme.MutedText().Render(participantsLine(m.members))
 	body := m.viewport.View()
 	mention := ""
@@ -2372,7 +2372,7 @@ func (m model) viewRoom() string {
 		statusLine = theme.MutedText().Render(status)
 	}
 	// Keep keys on their own short line so Width wrap doesn't stack a "footer wall".
-	footer := theme.Footer().Render("↑↓ scroll · enter send · @mention · /add · /resume · esc")
+	footer := theme.Footer().Render("↑↓ scroll · enter send · @mention · /add · /resume · esc · codebase work: salad engineer")
 	parts := []string{header, people, body}
 	if mention != "" {
 		parts = append(parts, mention)
