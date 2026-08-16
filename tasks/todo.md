@@ -38,8 +38,9 @@ the next implementation pass.
   remains open.
 - [x] Add a pull-request model-free Linux x64 build/smoke of the pinned,
   security-patched DeepSeek carrier. The first run exposed and the source now
-  fixes a malformed shape-checked persona patch; the rerun is the remaining CI
-  proof.
+  fixes a malformed shape-checked persona patch. The next run also exposed
+  that `--offline` made clean runners impossible; the builder now prefers the
+  cache while allowing a clean pinned dependency fetch. CI proof remains open.
 - [ ] Prove OAuth login, inspect, edit, approve, test, failure, follow-up,
   resume, cancel, and normal Salad Chat journeys in real environments.
 - [ ] Ship only a pinned DSH source revision plus the exact Salad patch set,

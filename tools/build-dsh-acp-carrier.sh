@@ -113,11 +113,11 @@ fs.writeFileSync(buildPath, build)
 NODE
 
 cd "$source_dir"
-# The carrier build must be reproducible from the existing lockfile and must
-# never silently fetch a different dependency graph during a release build.
-# The lockfile is intentionally allowed to update only because the script adds
-# target-specific workspace/native entries immediately above this command.
-"$pnpm_bin" install --offline --no-frozen-lockfile
+# The carrier build starts from the pinned source and lockfile. The script adds
+# only the target-specific workspace/native entries immediately above this
+# command, so pnpm must be allowed to update those entries. Prefer the runner's
+# cache, but allow a clean release runner to fetch the already-pinned graph.
+"$pnpm_bin" install --prefer-offline --no-frozen-lockfile
 lock_sha256="$(shasum -a 256 pnpm-lock.yaml | awk '{print $1}')"
 node_version="$($node_bin --version)"
 pnpm_version="$($pnpm_bin --version)"
