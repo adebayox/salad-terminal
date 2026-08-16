@@ -37,7 +37,9 @@ the next implementation pass.
   using the existing `SHA256SUMS` manifest; first tagged-release verification
   remains open.
 - [x] Add a pull-request model-free Linux x64 build/smoke of the pinned,
-  security-patched DeepSeek carrier; its first run is the remaining CI proof.
+  security-patched DeepSeek carrier. The first run exposed and the source now
+  fixes a malformed shape-checked persona patch; the rerun is the remaining CI
+  proof.
 - [ ] Prove OAuth login, inspect, edit, approve, test, failure, follow-up,
   resume, cancel, and normal Salad Chat journeys in real environments.
 - [ ] Ship only a pinned DSH source revision plus the exact Salad patch set,
