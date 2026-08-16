@@ -956,3 +956,12 @@ surface. They share presentation and safety policy but do not share transport.
 - [ ] Verify the published release with a real dependency-free inspect/edit/
   test workflow through the unified TUI; no local Go/Node build is allowed
   during the active disk-safety pause.
+
+### Persistent ACP provider selection follow-up (2026-08-16)
+
+- [x] Found that the persistent workspace ACP path resolved the selected
+  provider/model but omitted both from `initialize`; the one-shot compatibility
+  path already sent them.
+- [x] Sent `cwd`, provider, model, and client capabilities through the shared
+  initialize-parameter helper and added a regression test.
+- [ ] Verify through remote Go 1.25 CI and a free-provider release smoke.
