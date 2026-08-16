@@ -188,24 +188,18 @@ func (s *Session) run(ctx context.Context, opts Options, ready chan<- error) {
 	}()
 	defer close(s.done)
 	defer close(s.events)
-	defer func() { _ = stdin.Close(); _ = cmd.Wait() }()
-	go func() { _, _ = io.Copy(io.Discard, stderr) }()
-
-	finished := make(chan struct{})
-	var killOnce sync.Once
-	go func() {
+	processDone := make(chan error, 1)
+	go func() { processDone <- cmd.Wait() }()
+	defer func() {
+		_ = stdin.Close()
 		select {
-		case <-runCtx.Done():
-			_ = stdin.Close()
-			select {
-			case <-finished:
-			case <-time.After(3 * time.Second):
-				killOnce.Do(func() { _ = killProcessTree(cmd) })
-			}
-		case <-finished:
+		case <-processDone:
+		case <-time.After(3 * time.Second):
+			_ = killProcessTree(cmd)
+			<-processDone
 		}
 	}()
-	defer close(finished)
+	go func() { _, _ = io.Copy(io.Discard, stderr) }()
 
 	var writeMu sync.Mutex
 	writeFrame := func(frame any) error {
@@ -238,41 +232,41 @@ func (s *Session) run(ctx context.Context, opts Options, ready chan<- error) {
 		return nil
 	}
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64*1024), maxFrameBytes)
-	read := func(readCtx context.Context) (rpcFrame, error) {
-		result := make(chan struct {
-			frame rpcFrame
-			err   error
-		}, 1)
-		go func() {
-			if !scanner.Scan() {
-				if scanErr := scanner.Err(); scanErr != nil {
-					result <- struct {
-						frame rpcFrame
-						err   error
-					}{err: fmt.Errorf("read ACP response: %w", scanErr)}
-				} else if runCtx.Err() != nil {
-					result <- struct {
-						frame rpcFrame
-						err   error
-					}{err: runCtx.Err()}
-				} else {
-					result <- struct {
-						frame rpcFrame
-						err   error
-					}{err: errors.New("DeepSeek Harness ACP closed its output")}
-				}
+	type readResult struct {
+		frame rpcFrame
+		err   error
+	}
+	frames := make(chan readResult, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 64*1024), maxFrameBytes)
+		for scanner.Scan() {
+			frame, decodeErr := decodeFrame(scanner.Bytes())
+			select {
+			case frames <- readResult{frame: frame, err: decodeErr}:
+			case <-runCtx.Done():
 				return
 			}
-			frame, decodeErr := decodeFrame(scanner.Bytes())
-			result <- struct {
-				frame rpcFrame
-				err   error
-			}{frame: frame, err: decodeErr}
-		}()
+			if decodeErr != nil {
+				return
+			}
+		}
+		var err error
+		if scanErr := scanner.Err(); scanErr != nil {
+			err = fmt.Errorf("read ACP response: %w", scanErr)
+		} else if runCtx.Err() != nil {
+			err = runCtx.Err()
+		} else {
+			err = errors.New("DeepSeek Harness ACP closed its output")
+		}
 		select {
-		case value := <-result:
+		case frames <- readResult{err: err}:
+		case <-runCtx.Done():
+		}
+	}()
+	read := func(readCtx context.Context) (rpcFrame, error) {
+		select {
+		case value := <-frames:
 			return value.frame, value.err
 		case <-readCtx.Done():
 			return rpcFrame{}, readCtx.Err()

@@ -98,6 +98,7 @@ type model struct {
 	workspaceOK                bool
 	workspaceDir               string
 	workspaceMode              bool
+	workspaceGeneration        uint64
 	workspaceSession           *harness.Session
 	workspaceCleanup           func()
 	workspacePendingPermission string
@@ -218,17 +219,18 @@ func newModel(opts Options) model {
 		ta.Placeholder = "Message…  /trust · /chat for normal Salad chat"
 	}
 	return model{
-		screen:        screenBoot,
-		status:        "Opening Salad…",
-		composer:      ta,
-		viewport:      viewport.New(80, 20),
-		chatID:        strings.TrimSpace(opts.ChatID),
-		forceResume:   opts.ForceResume,
-		forceContinue: opts.ForceContinue,
-		forceNew:      opts.ForceNew,
-		workspaceDir:  root,
-		workspaceOK:   workspace.IsTrusted(root),
-		workspaceMode: workspaceMode,
+		screen:              screenBoot,
+		status:              "Opening Salad…",
+		composer:            ta,
+		viewport:            viewport.New(80, 20),
+		chatID:              strings.TrimSpace(opts.ChatID),
+		forceResume:         opts.ForceResume,
+		forceContinue:       opts.ForceContinue,
+		forceNew:            opts.ForceNew,
+		workspaceDir:        root,
+		workspaceOK:         workspace.IsTrusted(root),
+		workspaceMode:       workspaceMode,
+		workspaceGeneration: 1,
 		// Opt-in: /git /read /diff or ctrl+t. Avoid shipping git dumps on every send.
 		attachTools: false,
 	}
@@ -571,7 +573,11 @@ func (m *model) openSelectedChat(id, title string) tea.Cmd {
 	m.err = ""
 	m.composer.SetValue("")
 	m.composer.Focus()
-	return openRoomCmd(m.client, id)
+	openCmd := openRoomCmd(m.client, id)
+	if m.wsClient == nil && m.creds != nil {
+		return tea.Batch(openCmd, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken))
+	}
+	return openCmd
 }
 
 func (m *model) showResumePicker(status string) tea.Cmd {
@@ -596,7 +602,7 @@ func (m *model) afterAuth() tea.Cmd {
 		m.status = "Starting workspace agent…"
 		m.composer.Focus()
 		m.refreshViewport()
-		return startWorkspaceSessionCmd(m.client, m.workspaceDir)
+		return startWorkspaceSessionCmd(m.client, m.workspaceDir, m.workspaceGeneration)
 	}
 	wsCmd := wsListenCmd(m.creds.BaseURL, m.creds.AccessToken)
 
@@ -956,6 +962,11 @@ func (m model) updateApprove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		return m.approvePending(false)
 	case "a":
+		if m.workspacePendingPermission != "" {
+			// ACP currently exposes one approval decision. Do not claim that
+			// "always allow" was persisted when the carrier only supports once.
+			return m.approvePending(false)
+		}
 		return m.approvePending(true)
 	case "n", "esc", "ctrl+c":
 		return m.rejectPending()
@@ -987,6 +998,8 @@ func (m model) viewApprove() string {
 	b.WriteString(theme.Selected().Width(min(width-4, 96)).Render(body) + "\n\n")
 	if m.pendingKind == "edit" {
 		b.WriteString(theme.Footer().Render("y approve · a approve for this session · n reject · esc cancel"))
+	} else if m.pendingKind == "harness" {
+		b.WriteString(theme.Footer().Render("y approve once · n reject · esc cancel"))
 	} else {
 		b.WriteString(theme.Footer().Render("y run once · a always allow this command this session · n reject · esc cancel"))
 	}
@@ -1073,6 +1086,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case workspaceSessionMsg:
+		if msg.generation != m.workspaceGeneration || !m.workspaceMode {
+			if msg.session != nil {
+				msg.session.Close()
+			}
+			if msg.cleanup != nil {
+				msg.cleanup()
+			}
+			return m, nil
+		}
 		if msg.err != nil {
 			m.workspaceSession = nil
 			m.workspaceCleanup = nil
@@ -1084,9 +1106,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.workspaceCleanup = msg.cleanup
 		m.err = ""
 		m.status = "Workspace agent ready"
-		return m, waitWorkspaceEvent(m.workspaceSession.Events())
+		return m, waitWorkspaceEvent(m.workspaceSession.Events(), m.workspaceGeneration)
 
 	case workspaceEventMsg:
+		if msg.generation != m.workspaceGeneration || !m.workspaceMode || m.workspaceSession == nil {
+			return m, nil
+		}
 		if msg.closed {
 			if m.workspaceMode && m.workspaceSession != nil && m.err == "" {
 				m.status = "Workspace agent ended"
@@ -1117,9 +1142,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.status = "Workspace agent stopped"
 		}
-		return m, waitWorkspaceEvent(m.workspaceSession.Events())
+		return m, waitWorkspaceEvent(m.workspaceSession.Events(), m.workspaceGeneration)
 
 	case workspacePromptMsg:
+		if msg.generation != m.workspaceGeneration || !m.workspaceMode {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.sending = false
 			m.err = humanizeWorkspaceError(msg.err)
@@ -1994,7 +2022,7 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 			m.err = ""
 			m.composer.Focus()
 			m.refreshViewport()
-			return m, startWorkspaceSessionCmd(m.client, m.workspaceDir)
+			return m, startWorkspaceSessionCmd(m.client, m.workspaceDir, m.workspaceGeneration)
 		}
 	case "workspace", "agent":
 		if !m.workspaceOK {
@@ -2015,7 +2043,7 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.err = ""
 		m.composer.Focus()
 		m.refreshViewport()
-		return m, startWorkspaceSessionCmd(m.client, m.workspaceDir)
+		return m, startWorkspaceSessionCmd(m.client, m.workspaceDir, m.workspaceGeneration)
 	case "chat":
 		if m.workspaceMode {
 			m.closeWorkspace()
@@ -2023,7 +2051,11 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 			m.forceResume = false
 			m.messages = nil
 			m.screen = screenNewAI
-			return m, m.beginNewChat()
+			cmd := m.beginNewChat()
+			if m.creds != nil {
+				cmd = tea.Batch(cmd, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken))
+			}
+			return m, cmd
 		}
 		m.status = "Already in Salad chat"
 	case "tools":
@@ -2076,7 +2108,7 @@ func (m model) sendComposer() (tea.Model, tea.Cmd) {
 		m.status = "Workspace agent is working…"
 		m.composer.SetValue("")
 		m.mentionOpen = false
-		return m, sendWorkspacePromptCmd(m.workspaceSession, content)
+		return m, sendWorkspacePromptCmd(m.workspaceSession, content, m.workspaceGeneration)
 	}
 	if m.client == nil || m.chatID == "" {
 		return m, nil

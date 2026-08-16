@@ -92,7 +92,7 @@ done
 	for {
 		select {
 		case event := <-session.Events():
-			updatedModel, _ = updated.Update(workspaceEventMsg{event: event})
+			updatedModel, _ = updated.Update(workspaceEventMsg{generation: updated.workspaceGeneration, event: event})
 			updated = updatedModel.(model)
 			if event.Kind == "turn_end" {
 				if updated.sending {
