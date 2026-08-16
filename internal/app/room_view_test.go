@@ -8,8 +8,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/salad-ai/salad-terminal/internal/config"
 	"github.com/salad-ai/salad-terminal/internal/harness"
+	"github.com/salad-ai/salad-terminal/internal/workspace"
 )
+
+func TestExplicitlyTrustedNonProjectStartsWorkspaceMode(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(config.EnvConfigDir, t.TempDir())
+	t.Chdir(root)
+	if err := workspace.Trust(root); err != nil {
+		t.Fatalf("trust workspace: %v", err)
+	}
+
+	m := newModel(Options{})
+	if !m.workspaceMode {
+		t.Fatal("explicitly trusted directory did not enter workspace mode")
+	}
+}
 
 func TestRoomViewKeepsOneTerminalSurfaceForChatAndWorkspace(t *testing.T) {
 	m := newModel(Options{ForceContinue: true})
