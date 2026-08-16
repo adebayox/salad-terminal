@@ -34,11 +34,11 @@ the next implementation pass.
   resume, cancel, and normal Salad Chat journeys in real environments.
 - [ ] Ship only a pinned DSH source revision plus the exact Salad patch set,
   checksum, platform capability statement, and rollback path.
-- [ ] Re-run the focused terminal/auth verification after the disk-pressure
-  pause in existing CI or a prepared toolchain environment. Local execution
-  is intentionally paused: this checkout requires Go 1.25.0 while this Mac
-  has Go 1.24.4, and local dependency/toolchain downloads are prohibited
-  during the disk-pressure incident.
+- [x] Re-ran the focused terminal verification in pull-request CI with the
+  Go 1.25.0 toolchain selected from `go.mod`. Local Go 1.24.4 was not changed
+  because the active disk-safety rule prohibits local dependency/toolchain
+  installs; the remote matching toolchain is the authoritative verification
+  path for this pass.
 
 ### Verification record — 2026-08-16
 
@@ -73,22 +73,19 @@ the next implementation pass.
   untouched by this work.
 - Static review passed after the streaming/reasoning edits (`gofmt`, shell and
   patch-script syntax checks, diff checks, and provider type-shape inspection).
-  The Data volume currently reports 8.7 GiB free, but local runtime
-  verification remains paused because the required Go 1.25.0 toolchain and
-  uncached backend modules would trigger downloads. Use existing CI or a
-  prepared, matching toolchain for the remaining runtime gates.
+  The Data volume currently reports about 10 GiB free, but local runtime
+  verification remains paused by the active disk-safety instruction. Use
+  existing CI or a prepared, matching toolchain for the remaining runtime
+  gates.
 - Existing CI evidence: release run `31890011530` completed successfully for
   the pinned carrier/job fix at commit `a09460bb117a76ed1b3c4f804296af24063f7ced`.
   It does not cover the current uncommitted provider-streaming edits, so it is
   evidence for the carrier path only, not a substitute for the remaining
   backend runtime verification.
-- Terminal hardening commit `d829e87` is now pushed to PR #21. That PR reports
-  no checks because this repository's only workflow is release/tag-triggered;
-  do not dispatch the write-enabled release workflow from the feature branch.
-- Added read-only pull-request CI and verified head `720eb80` in run
-  `31956659906`: Go formatting, all Go tests, terminal build, and release-script
-  syntax checks passed. CI provisioned Go 1.25 from `go.mod`; no local
-  toolchain or dependency install was required.
+- Terminal hardening and read-only pull-request CI are pushed to PR #21. The
+  current head `b321a80` passed run `31956770911`: Go formatting, all Go tests,
+  terminal build, and release-script syntax checks passed. CI provisioned Go
+  1.25 from `go.mod`; no local toolchain or dependency install was required.
 
 No implementation change is considered complete until the relevant item has a
 direct test or real-run artifact.
