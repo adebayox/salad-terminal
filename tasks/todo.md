@@ -764,3 +764,62 @@ Verified the workspace-tool flow across every tool-capable model family on live 
   resolve the server-selected engineer provider for accounts where the
   default OpenAI route still returns 502. Keep provider selection explicit;
   do not silently switch providers.
+## Unified Salad Terminal architecture correction (2026-08-16)
+
+The previous preview exposed `salad engineer` as a separate user-facing path.
+That is not the intended product. Salad Terminal must remain one terminal
+experience; DeepSeek Harness is an internal execution engine for workspace
+turns, not a second command developers must learn.
+
+Plan before implementation:
+
+- [x] Keep one primary user entry point: `salad` from a repository.
+- [x] Keep normal Salad Chat transport and web-shared conversations intact;
+  no harness prompt, tool call, or receipt may enter the normal message/router
+  path.
+- [x] Add a shared terminal session adapter so the existing TUI owns prompt
+  entry, transcript, approvals, cancellation, and exit while the DSH ACP
+  process owns the model/tool loop for trusted workspace turns.
+- [x] Make the workspace decision visible and safe: an untrusted project shows
+  a trust gate; `/chat` explicitly opens normal Salad Chat, while trusted
+  repository prompts use the harness behind the same TUI.
+- [x] Keep carrier installation, doctor, rollback, and low-level compatibility
+  commands internal/diagnostic; remove `salad engineer` from the normal help
+  and documentation.
+- [x] Preserve an explicit, clearly labeled way to open a normal Salad chat
+  from the same terminal without creating a second terminal product.
+- [ ] Verify one real TUI journey: trust workspace -> inspect -> edit approval
+  -> run test approval -> follow-up -> clean exit, plus a separate normal chat
+  control proving no normal-chat transport changes.
+
+Implementation evidence so far:
+
+- [x] Added `internal/harness.Session`, a client-owned ACP session with prompt,
+  streamed assistant events, permission responses, cancellation, and cleanup.
+- [x] Added the workspace adapter behind the existing Bubble Tea model; the
+  TUI owns the composer, transcript, approval screen, `/chat` escape hatch,
+  and shutdown while DSH owns the local model/tool loop.
+- [x] Bare `salad` detects project folders, shows a trust gate, and starts the
+  integrated workspace session after `/trust`; untrusted/non-project flows
+  remain available as normal Salad Chat.
+- [x] Removed `salad engineer` from normal help and made the old command fail
+  with a migration message instead of starting a second runtime.
+- [x] Added fake-ACP session and UI boundary tests; `go test ./...`, `go vet
+  ./...`, and `git diff --check` pass.
+- [x] Added repeated approval-race and close-while-permission tests; 30
+  repetitions pass, and the session now cancels safely instead of dropping a
+  fast approval or hanging on shutdown.
+- [x] Final verification passes: `go test ./... -count=1`, targeted race tests,
+  `go vet ./...`, `go build ./cmd/salad`, help/migration checks, and
+  `git diff --check`.
+- [x] Real TUI smoke reached `Salad Terminal · salad-unified-smoke` and
+  `Workspace agent ready` in a trusted disposable Go project.
+- [ ] Real authenticated model turn through the unified TUI is pending because
+  the local Salad session expired; the observed provider request returned HTTP
+  401. Re-authentication is required for final live inspect/edit/test proof.
+
+Open verification work item: `work-b84574d78e00`.
+
+Architecture decision: one binary, one TUI, one user-facing session surface;
+two internal adapters (Salad Chat and DSH workspace execution) behind the
+surface. They share presentation and safety policy but do not share transport.

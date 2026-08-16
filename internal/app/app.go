@@ -20,6 +20,7 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/auth"
 	"github.com/salad-ai/salad-terminal/internal/bridge"
 	"github.com/salad-ai/salad-terminal/internal/config"
+	"github.com/salad-ai/salad-terminal/internal/harness"
 	"github.com/salad-ai/salad-terminal/internal/realtime"
 	"github.com/salad-ai/salad-terminal/internal/theme"
 	"github.com/salad-ai/salad-terminal/internal/tools"
@@ -34,6 +35,7 @@ type Options struct {
 	ForceResume   bool // salad --resume → picker
 	ForceContinue bool // salad --continue → last chat for this folder
 	ForceNew      bool // salad / salad new → AI picker → create
+	WorkspaceMode bool // internal: use the local harness behind this TUI
 }
 
 type screen int
@@ -86,20 +88,24 @@ type model struct {
 	aiShowMore bool   // false = family defaults only; true = full chat catalog
 	aiPurpose  string // "create" | "add"
 
-	chatID       string
-	chatTitle    string
-	members      []member
-	messages     []api.ChatMessage
-	viewport     viewport.Model
-	composer     textarea.Model
-	sending      bool
-	workspaceOK  bool
-	workspaceDir string
-	live         string // "ws" | "poll" | ""
-	wsClient     *realtime.Client
-	wsEvents     <-chan realtime.Event
-	focusFiles   []string
-	attachTools  bool
+	chatID                     string
+	chatTitle                  string
+	members                    []member
+	messages                   []api.ChatMessage
+	viewport                   viewport.Model
+	composer                   textarea.Model
+	sending                    bool
+	workspaceOK                bool
+	workspaceDir               string
+	workspaceMode              bool
+	workspaceSession           *harness.Session
+	workspaceCleanup           func()
+	workspacePendingPermission string
+	live                       string // "ws" | "poll" | ""
+	wsClient                   *realtime.Client
+	wsEvents                   <-chan realtime.Event
+	focusFiles                 []string
+	attachTools                bool
 
 	mentionOpen bool
 	mentionIdx  int
@@ -182,10 +188,16 @@ func RunOptions(opts Options) error {
 	}
 	p := tea.NewProgram(m, programOpts...)
 	finalModel, err := p.Run()
-	if fm, ok := finalModel.(model); ok && fm.wsClient != nil {
-		fm.wsClient.Close()
-	} else if m.wsClient != nil {
-		m.wsClient.Close()
+	if fm, ok := finalModel.(model); ok {
+		if fm.wsClient != nil {
+			fm.wsClient.Close()
+		}
+		fm.closeWorkspace()
+	} else {
+		if m.wsClient != nil {
+			m.wsClient.Close()
+		}
+		m.closeWorkspace()
 	}
 	return err
 }
@@ -201,6 +213,10 @@ func newModel(opts Options) model {
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	root, _ := workspace.ResolveRoot("")
+	workspaceMode := opts.WorkspaceMode || (opts.ChatID == "" && !opts.ForceResume && !opts.ForceContinue && workspace.LooksLikeProject(root))
+	if workspaceMode {
+		ta.Placeholder = "Message…  /trust · /chat for normal Salad chat"
+	}
 	return model{
 		screen:        screenBoot,
 		status:        "Opening Salad…",
@@ -212,6 +228,7 @@ func newModel(opts Options) model {
 		forceNew:      opts.ForceNew,
 		workspaceDir:  root,
 		workspaceOK:   workspace.IsTrusted(root),
+		workspaceMode: workspaceMode,
 		// Opt-in: /git /read /diff or ctrl+t. Avoid shipping git dumps on every send.
 		attachTools: false,
 	}
@@ -388,6 +405,10 @@ var defaultAIProductSlugs = []string{
 }
 
 func (m *model) beginNewChat() tea.Cmd {
+	if m.workspaceMode {
+		m.closeWorkspace()
+		m.workspaceMode = false
+	}
 	m.screen = screenNewAI
 	m.aiPurpose = "create"
 	m.aiLoad = true
@@ -539,6 +560,10 @@ func resolveContinueChat(workspaceDir string) (chatID, title string) {
 }
 
 func (m *model) openSelectedChat(id, title string) tea.Cmd {
+	if m.workspaceMode {
+		m.closeWorkspace()
+		m.workspaceMode = false
+	}
 	m.chatID = id
 	m.chatTitle = title
 	m.screen = screenRoom
@@ -559,6 +584,20 @@ func (m *model) showResumePicker(status string) tea.Cmd {
 }
 
 func (m *model) afterAuth() tea.Cmd {
+	if m.workspaceMode {
+		m.screen = screenRoom
+		m.chatTitle = defaultTerminalChatName(m.workspaceDir)
+		if !m.workspaceOK {
+			m.status = "Project found · type /trust to enable workspace work"
+			m.composer.Focus()
+			m.refreshViewport()
+			return nil
+		}
+		m.status = "Starting workspace agent…"
+		m.composer.Focus()
+		m.refreshViewport()
+		return startWorkspaceSessionCmd(m.client, m.workspaceDir)
+	}
 	wsCmd := wsListenCmd(m.creds.BaseURL, m.creds.AccessToken)
 
 	// Explicit resume picker (claude --resume).
@@ -849,6 +888,17 @@ func (m model) drainToolQueue() (model, []tea.Cmd) {
 
 // approvePending approves the tool currently awaiting review and runs it.
 func (m model) approvePending(remember bool) (model, tea.Cmd) {
+	if m.workspacePendingPermission != "" && m.workspaceSession != nil {
+		permissionID := m.workspacePendingPermission
+		m.workspacePendingPermission = ""
+		m.pendingKind = ""
+		m.pendingPreview = ""
+		m.pendingReason = ""
+		m.screen = screenRoom
+		m.status = "Approved workspace action — agent continuing…"
+		m.workspaceSession.RespondPermission(permissionID, true)
+		return m, nil
+	}
 	if m.pendingTool == nil {
 		return m, nil
 	}
@@ -877,6 +927,17 @@ func (m model) approvePending(remember bool) (model, tea.Cmd) {
 
 // rejectPending rejects the tool currently awaiting review.
 func (m model) rejectPending() (model, tea.Cmd) {
+	if m.workspacePendingPermission != "" && m.workspaceSession != nil {
+		permissionID := m.workspacePendingPermission
+		m.workspacePendingPermission = ""
+		m.pendingKind = ""
+		m.pendingPreview = ""
+		m.pendingReason = ""
+		m.screen = screenRoom
+		m.status = "Rejected workspace action"
+		m.workspaceSession.RespondPermission(permissionID, false)
+		return m, nil
+	}
 	if m.pendingTool == nil {
 		return m, nil
 	}
@@ -909,7 +970,9 @@ func (m model) viewApprove() string {
 	}
 	var b strings.Builder
 	b.WriteString(theme.Header().Render(" Salad workspace approval ") + "\n\n")
-	if m.pendingKind == "edit" {
+	if m.pendingKind == "harness" {
+		b.WriteString(theme.AIHeader("workspace agent").Render("● workspace action — the agent needs approval") + "\n\n")
+	} else if m.pendingKind == "edit" {
 		b.WriteString(theme.AIHeader("apply_edit").Render("● apply_edit — the AI wants to edit a file") + "\n\n")
 	} else {
 		b.WriteString(theme.AIHeader("run_command").Render("● run_command — the AI wants to run a command") + "\n\n")
@@ -1007,6 +1070,61 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Account creation opened — return here and sign in when it is ready."
 		m.err = ""
+		return m, nil
+
+	case workspaceSessionMsg:
+		if msg.err != nil {
+			m.workspaceSession = nil
+			m.workspaceCleanup = nil
+			m.err = humanizeWorkspaceError(msg.err)
+			m.status = "Workspace agent unavailable"
+			return m, nil
+		}
+		m.workspaceSession = msg.session
+		m.workspaceCleanup = msg.cleanup
+		m.err = ""
+		m.status = "Workspace agent ready"
+		return m, waitWorkspaceEvent(m.workspaceSession.Events())
+
+	case workspaceEventMsg:
+		if msg.closed {
+			if m.workspaceMode && m.workspaceSession != nil && m.err == "" {
+				m.status = "Workspace agent ended"
+			}
+			return m, nil
+		}
+		event := msg.event
+		switch event.Kind {
+		case "ready":
+			m.status = "Workspace agent ready"
+		case "assistant":
+			m.appendWorkspaceAssistant(event.Text)
+		case "status":
+			m.status = firstNonEmpty(event.Text, "Workspace agent working…")
+		case "permission":
+			m.workspacePendingPermission = event.PermissionID
+			m.pendingKind = "harness"
+			m.pendingPreview = event.Text
+			m.pendingReason = "Review this workspace action before allowing the agent to continue."
+			m.screen = screenApprove
+		case "turn_end":
+			m.sending = false
+			m.status = "Ready for the next workspace request"
+		case "error":
+			m.sending = false
+			if event.Err != nil {
+				m.err = humanizeWorkspaceError(event.Err)
+			}
+			m.status = "Workspace agent stopped"
+		}
+		return m, waitWorkspaceEvent(m.workspaceSession.Events())
+
+	case workspacePromptMsg:
+		if msg.err != nil {
+			m.sending = false
+			m.err = humanizeWorkspaceError(msg.err)
+			m.status = "Workspace request failed"
+		}
 		return m, nil
 
 	case chatsMsg:
@@ -1606,6 +1724,13 @@ func (m model) updateRoom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case "esc":
+		if m.workspaceMode {
+			m.closeWorkspace()
+			m.workspaceMode = false
+			m.composer.Blur()
+			m.forceResume = true
+			return m, m.showResumePicker("Workspace agent closed · choose a Salad chat")
+		}
 		m.composer.Blur()
 		m.forceResume = true
 		return m, m.showResumePicker("Resume another Salad chat · n new · enter open")
@@ -1854,28 +1979,80 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 		if err := workspace.Trust(m.workspaceDir); err != nil {
 			m.err = api.HumanizeError(err)
 		} else {
+			if m.wsClient != nil {
+				m.wsClient.Close()
+				m.wsClient = nil
+			}
+			m.closeWorkspace()
 			m.workspaceOK = true
-			m.status = "Workspace trusted"
+			m.workspaceMode = true
+			m.screen = screenRoom
+			m.chatID = ""
+			m.chatTitle = defaultTerminalChatName(m.workspaceDir)
+			m.messages = nil
+			m.status = "Workspace trusted · starting agent…"
+			m.err = ""
+			m.composer.Focus()
+			m.refreshViewport()
+			return m, startWorkspaceSessionCmd(m.client, m.workspaceDir)
 		}
+	case "workspace", "agent":
+		if !m.workspaceOK {
+			m.err = "Trust this workspace first with /trust"
+			return m, nil
+		}
+		if m.wsClient != nil {
+			m.wsClient.Close()
+			m.wsClient = nil
+		}
+		m.closeWorkspace()
+		m.workspaceMode = true
+		m.screen = screenRoom
+		m.chatID = ""
+		m.chatTitle = defaultTerminalChatName(m.workspaceDir)
+		m.messages = nil
+		m.status = "Starting workspace agent…"
+		m.err = ""
+		m.composer.Focus()
+		m.refreshViewport()
+		return m, startWorkspaceSessionCmd(m.client, m.workspaceDir)
+	case "chat":
+		if m.workspaceMode {
+			m.closeWorkspace()
+			m.workspaceMode = false
+			m.forceResume = false
+			m.messages = nil
+			m.screen = screenNewAI
+			return m, m.beginNewChat()
+		}
+		m.status = "Already in Salad chat"
 	case "tools":
 		m.attachTools = !m.attachTools
 		m.status = fmt.Sprintf("attachTools=%v", m.attachTools)
 	case "new":
+		if m.workspaceMode {
+			m.closeWorkspace()
+			m.workspaceMode = false
+		}
 		return m, m.beginNewChat()
 	case "add":
+		if m.workspaceMode {
+			m.err = "Use /chat before adding Salad Chat participants"
+			return m, nil
+		}
 		return m, m.beginAddAI()
 	case "resume", "chats":
 		m.composer.Blur()
 		m.forceResume = true
 		return m, m.showResumePicker("↑↓ open a chat · n new")
 	default:
-		m.err = "try /add · /new · /resume · /git · /read · /trust"
+		m.err = "try /workspace · /chat · /add · /new · /resume · /git · /read · /trust"
 	}
 	return m, nil
 }
 
 func (m model) sendComposer() (tea.Model, tea.Cmd) {
-	if m.sending || m.client == nil || m.chatID == "" {
+	if m.sending {
 		return m, nil
 	}
 	content := strings.TrimSpace(m.composer.Value())
@@ -1885,6 +2062,24 @@ func (m model) sendComposer() (tea.Model, tea.Cmd) {
 	// Intercept slash commands typed without trailing newline handling.
 	if strings.HasPrefix(content, "/") {
 		return m.runSlash(content)
+	}
+	if m.workspaceMode {
+		if m.workspaceSession == nil {
+			m.err = "Workspace agent is not ready yet"
+			return m, nil
+		}
+		m.messages = append(m.messages, api.ChatMessage{Role: "user", AuthorName: "You", Body: content, CreatedAt: time.Now()})
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		m.sending = true
+		m.err = ""
+		m.status = "Workspace agent is working…"
+		m.composer.SetValue("")
+		m.mentionOpen = false
+		return m, sendWorkspacePromptCmd(m.workspaceSession, content)
+	}
+	if m.client == nil || m.chatID == "" {
+		return m, nil
 	}
 
 	req := api.SendMessageRequest{
@@ -2352,8 +2547,18 @@ func relativeTime(t time.Time) string {
 
 func (m model) viewRoom() string {
 	w := max(m.width, 60)
-	header := theme.Header().Width(w).Render(theme.Mark() + "  ·  Salad chat  ·  " + displayChatTitle(m.chatTitle))
-	people := theme.MutedText().Render(participantsLine(m.members))
+	headerTitle := "Salad chat  ·  " + displayChatTitle(m.chatTitle)
+	peopleText := participantsLine(m.members)
+	if m.workspaceMode {
+		headerTitle = "Salad Terminal  ·  " + displayChatTitle(m.chatTitle)
+		if m.workspaceOK {
+			peopleText = "trusted workspace · DeepSeek Harness · network denied by default"
+		} else {
+			peopleText = "project detected · type /trust to enable workspace work"
+		}
+	}
+	header := theme.Header().Width(w).Render(theme.Mark() + "  ·  " + headerTitle)
+	people := theme.MutedText().Render(peopleText)
 	body := m.viewport.View()
 	mention := ""
 	if m.mentionOpen {
@@ -2372,7 +2577,14 @@ func (m model) viewRoom() string {
 		statusLine = theme.MutedText().Render(status)
 	}
 	// Keep keys on their own short line so Width wrap doesn't stack a "footer wall".
-	footer := theme.Footer().Render("↑↓ scroll · enter send · @mention · /add · /resume · esc · codebase work: salad engineer")
+	footerText := "↑↓ scroll · enter send · @mention · /add · /resume · esc"
+	if m.workspaceMode {
+		footerText = "↑↓ scroll · enter send · /trust · /chat normal chat · esc close workspace agent"
+		if m.workspaceOK {
+			footerText = "↑↓ scroll · enter send · y/n approve · /chat normal chat · esc close workspace agent"
+		}
+	}
+	footer := theme.Footer().Render(footerText)
 	parts := []string{header, people, body}
 	if mention != "" {
 		parts = append(parts, mention)

@@ -33,36 +33,32 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 The installer checks the SHA-256 checksum and puts `salad.exe` in
 `%LOCALAPPDATA%\Salad\bin`.
 
-## Engineer mode
+## One terminal for chat and code
 
-There is one Salad Terminal binary with two explicit modes:
-
-- `salad` opens a normal Salad chat, shared with Salad web.
-- `salad engineer` opens the codebase agent. It is the mode for inspecting,
-  editing, testing, and running the repository.
-
-The normal chat screen is labeled `Salad chat` so it is not mistaken for the
-codebase agent. If the server-selected engineer provider is unavailable,
-choose a configured provider explicitly, for example:
-
-    salad engineer --salad-provider xai
-
-The `salad engineer` command runs an agent in the trusted repository you
-choose. It keeps one local session open for follow-up prompts and is separate
-from normal Salad chat; prompts and tool calls do not go through normal chat
-routing:
+There is one Salad Terminal user experience. Start it from the project:
 
 ```bash
 cd your-repository
-salad workspace trust
-salad engineer "Inspect the project, run the tests, and explain what you found"
-# Or start an open-ended engineer session:
-salad engineer
+salad
 ```
 
-`salad harness` remains as a compatibility command for carrier installation,
-diagnostics, JSON-RPC compatibility runs, and older one-shot scripts. It is
-not a second terminal product.
+When Salad detects a project, it opens the existing terminal UI and asks you
+to trust the folder if needed. After `/trust`, DeepSeek Harness runs behind
+that same UI. The prompt box, transcript, approvals, cancellation, and exit
+stay in Salad Terminal; the harness supplies the model/tool loop underneath.
+
+```text
+open project → salad → /trust → inspect → edit approval → test → follow up
+```
+
+Use `/chat` inside the same terminal when you want an ordinary Salad
+conversation. Those messages continue through the existing Salad Chat API and
+remain available in Salad web. Workspace prompts and local tool activity never
+enter that normal chat/router path.
+
+The old `salad engineer` command is no longer a separate product path. Run
+`salad` from the repository instead. `salad harness` remains an internal
+diagnostic and carrier-management command for support and development.
 
 On macOS and Linux, the installer also downloads the harness carrier: about
 54 MB compressed and about 198 MB installed in the current preview. Use
@@ -99,7 +95,8 @@ Set `SALAD_API_URL=https://api-staging.salad.ink` only when testing staging.
 
 | Command | Use it to |
 |---|---|
-| `salad` | Start a new chat. |
+| `salad` | Start the one terminal surface; in a project it opens workspace work. |
+| `/chat` | Return to an ordinary Salad Chat inside the terminal. |
 | `salad new` | Start a new chat. |
 | `salad --continue` | Continue the chat linked to the current folder. |
 | `salad --resume` | Choose a previous chat. |

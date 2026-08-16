@@ -1,16 +1,17 @@
 # DeepSeek Harness preview
 
-Salad Terminal has one engineer-facing command backed by a local DeepSeek
-Harness preview. This is not a second terminal and it is not the normal Salad
-chat engine. The engineer command keeps one ACP process alive for follow-up
-prompts, approvals, and cancellation.
+Salad Terminal is one terminal experience backed by a local DeepSeek Harness
+preview for trusted project work. The harness is behind the existing TUI: the
+same prompt, transcript, approvals, follow-up prompts, and cancellation are
+used for both project work and ordinary Salad chat.
 
 ## What is unchanged
 
-These commands still use the existing Salad chat path:
+Ordinary Salad Chat remains on its existing path:
 
 ```text
 salad
+# then type /chat inside the TUI
 salad new
 salad --continue
 salad --resume
@@ -18,8 +19,8 @@ salad resume <chat-id>
 salad say "..."
 ```
 
-The engineer session does not create messages or enter Salad's normal AI
-router. Lifecycle receipts are disabled by default. They are sent only when
+Workspace turns do not create messages or enter Salad's normal AI router.
+Lifecycle receipts are disabled by default. They are sent only when
 the developer explicitly supplies `--chat <chat-id>` or
 `SALAD_HARNESS_CHAT_ID` and then use the authenticated `/api/harness/events`
 endpoint. The receipt contains a run ID, opaque workspace ID, status, and
@@ -30,12 +31,13 @@ are unchanged.
 ## Run it
 
 On a supported macOS or Linux release, the normal installer installs the
-matching pinned ACP carrier automatically. Then trust the repository
-deliberately:
+matching pinned ACP carrier automatically. Start the one terminal and trust
+the repository when it asks:
 
 ```bash
 cd your-repository
-salad workspace trust
+salad
+# type /trust in the terminal
 ```
 
 Sign in to Salad before the first run. The installed carrier uses a
@@ -45,22 +47,21 @@ select one explicitly:
 
 ```text
 salad login
-salad engineer --salad-provider openai \
-  "Inspect the tests, show a plan first, and do not edit yet."
+SALAD_HARNESS_PROVIDER=openai salad
 ```
 
-For the normal engineer workflow, leave the prompt off and keep the session
-open:
+For workspace work, leave the prompt open and keep the same terminal session:
 
 ```text
-salad engineer
-[salad engineer] > read the project instructions and summarize the architecture
-[salad engineer] > now make the smallest fix and run the focused tests
+salad
+[Salad Terminal] > read the project instructions and summarize the architecture
+[Salad Terminal] > now make the smallest fix and run the focused tests
 ```
 
 The same local ACP session receives both prompts. Ctrl-C cancels the active
-turn and Ctrl-D ends the session cleanly. `salad harness` remains the
-compatibility name for one-shot and carrier-management commands.
+turn and Esc closes the workspace session. `/chat` returns to ordinary Salad
+Chat inside the same terminal. `salad harness` remains the compatibility name
+for one-shot and carrier-management commands.
 
 Developers who intentionally use a direct DeepSeek key can use the escape
 hatch `DEEPSEEK_API_KEY=...`; Salad never stores or forwards that key.
@@ -72,7 +73,7 @@ server or another operation that only needs localhost, request the narrower
 loopback capability per run:
 
 ```bash
-salad engineer --network loopback
+salad harness --network loopback
 ```
 
 On macOS, loopback mode allows model-controlled commands to bind and connect
@@ -82,7 +83,7 @@ a usable loopback interface. On Linux, use the broader capability only when
 you explicitly accept internet access:
 
 ```text
-salad engineer --network allow "Install the dependencies and run the test suite"
+salad harness --network allow "Install the dependencies and run the test suite"
 ```
 
 Salad prints a warning and asks for confirmation before starting that run.
@@ -105,7 +106,7 @@ an existing carrier unless `--force` is supplied:
 ```text
 salad harness install --runtime /path/to/dsh-acp-agent --config /path/to/cordis.yml
 salad harness doctor
-salad engineer "read the project instructions, inspect the tests, and make a plan"
+salad harness "read the project instructions, inspect the tests, and make a plan"
 salad harness rollback
 ```
 
@@ -120,12 +121,12 @@ separate receipt endpoint, the engineer run continues normally and the CLI
 does not treat the optional 404 as a run failure. The provider bridge is the
 required path for Salad-backed engineering.
 
-Each engineer session receives a local run ID. Continue a previous run
+Each workspace session receives a local run ID. Continue a previous run
 explicitly with:
 
 ```text
-salad engineer runs
-salad engineer resume <run-id> "Now run the focused test and explain the result"
+salad harness runs
+salad harness resume <run-id> "Now run the focused test and explain the result"
 ```
 
 Resume only after the earlier engineer process has ended. Salad refuses to

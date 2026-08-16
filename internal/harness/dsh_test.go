@@ -83,6 +83,85 @@ func TestRunACPInteractiveKeepsOneSessionAcrossPrompts(t *testing.T) {
 	}
 }
 
+func TestStartSessionStreamsIntoClientAndAcceptsPermission(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := StartSession(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACP"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp"},
+	})
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+	defer session.Close()
+
+	promptDone := make(chan error, 1)
+	go func() { promptDone <- session.Prompt(ctx, "Make a safe change") }()
+
+	var gotAssistant, gotPermission bool
+	for !(gotAssistant && gotPermission) {
+		select {
+		case event := <-session.Events():
+			switch event.Kind {
+			case "permission":
+				gotPermission = true
+				session.RespondPermission(event.PermissionID, false)
+			case "assistant":
+				gotAssistant = strings.Contains(event.Text, "ACP fake response")
+			}
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for session events")
+		}
+	}
+	if err := <-promptDone; err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+}
+
+func TestStartSessionCloseCancelsPendingPermission(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := StartSession(ctx, Options{
+		Command: os.Args[0], Args: []string{"-test.run=TestHarnessFakeACP"}, Cwd: t.TempDir(),
+		Env: []string{"SALAD_DSH_TEST_HELPER=acp"},
+	})
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+
+	promptDone := make(chan error, 1)
+	go func() { promptDone <- session.Prompt(ctx, "Close while approval is open") }()
+	select {
+	case event := <-session.Events():
+		if event.Kind == "ready" {
+			select {
+			case event = <-session.Events():
+			case <-ctx.Done():
+				t.Fatal("timed out waiting for permission")
+			}
+		}
+		if event.Kind != "permission" {
+			t.Fatalf("first non-ready event = %#v, want permission", event)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for permission")
+	}
+
+	started := time.Now()
+	session.Close()
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("Close() took %s while permission was pending", elapsed)
+	}
+	select {
+	case err := <-promptDone:
+		if err == nil {
+			t.Fatal("Prompt() succeeded after the session was closed")
+		}
+	case <-ctx.Done():
+		t.Fatal("Prompt() did not return after Close()")
+	}
+}
+
 func TestRunACPStartsFreshWhenSessionIDWasNotRequested(t *testing.T) {
 	var output strings.Builder
 	var callbackSession string

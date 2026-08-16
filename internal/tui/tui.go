@@ -6,8 +6,9 @@ import (
 	"github.com/salad-ai/salad-terminal/internal/app"
 )
 
-// Run launches Terminal. Bare launch (empty chatID) starts a new chat —
-// same as Claude Code with no flags.
+// Run launches the one Salad Terminal surface. In a detected project it
+// starts the trusted-workspace agent behind the same TUI; otherwise it opens
+// the normal Salad chat flow.
 func Run(chatID string) error {
 	if strings.TrimSpace(chatID) != "" {
 		return app.RunOptions(app.Options{ChatID: chatID})

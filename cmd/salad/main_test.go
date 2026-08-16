@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestValidateEngineerNetworkMode(t *testing.T) {
+func TestValidateHarnessNetworkMode(t *testing.T) {
 	tests := []struct {
 		name     string
 		mode     string
@@ -21,7 +21,7 @@ func TestValidateEngineerNetworkMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateEngineerNetworkMode(tt.mode, tt.platform)
+			err := validateHarnessNetworkMode(tt.mode, tt.platform)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("validateEngineerNetworkMode() error = %v", err)
@@ -74,5 +74,12 @@ func TestHarnessProviderRecoveryMessageOnlyForProviderFailures(t *testing.T) {
 				t.Fatalf("message = %q, want substring %q", message, tc.want)
 			}
 		})
+	}
+}
+
+func TestEngineerCommandIsNotASecondTerminal(t *testing.T) {
+	err := run([]string{"engineer"})
+	if err == nil || !strings.Contains(err.Error(), "no longer a separate terminal") {
+		t.Fatalf("run(engineer) error = %v", err)
 	}
 }

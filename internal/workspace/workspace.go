@@ -41,6 +41,24 @@ func ResolveRoot(explicit string) (string, error) {
 	return abs, nil
 }
 
+// LooksLikeProject keeps the single `salad` entry point helpful without
+// turning a terminal opened in an arbitrary home directory into a workspace
+// agent. It is intentionally conservative; trust is still required before
+// any local tools or harness process can start.
+func LooksLikeProject(root string) bool {
+	root, err := ResolveRoot(root)
+	if err != nil {
+		return false
+	}
+	markers := []string{".git", "go.mod", "package.json", "pyproject.toml", "Cargo.toml", "pom.xml", "build.gradle"}
+	for _, marker := range markers {
+		if _, err := os.Stat(filepath.Join(root, marker)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // OpaqueID returns a stable non-path workspace identifier for server bindings.
 func OpaqueID(root string) (string, error) {
 	root, err := ResolveRoot(root)

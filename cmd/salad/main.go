@@ -83,7 +83,7 @@ func run(args []string) error {
 			printCommandUsage("engineer")
 			return nil
 		}
-		return runEngineer(rest)
+		return errors.New("salad engineer is no longer a separate terminal; run `salad` from the project directory")
 	case "update":
 		if hasHelp(rest) {
 			printCommandUsage("update")
@@ -320,11 +320,7 @@ func runHarness(args []string) error {
 	return runHarnessMode(args, false)
 }
 
-func runEngineer(args []string) error {
-	return runHarnessMode(args, true)
-}
-
-func validateEngineerNetworkMode(networkMode, platform string) error {
+func validateHarnessNetworkMode(networkMode, platform string) error {
 	if networkMode != "deny" && networkMode != "loopback" && networkMode != "allow" {
 		return fmt.Errorf("unsupported harness network mode %q; choose deny, loopback, or allow", networkMode)
 	}
@@ -449,7 +445,7 @@ func runHarnessMode(args []string, interactive bool) error {
 	if interactive && protocol != "acp" {
 		return errors.New("salad engineer uses the ACP session runtime; jsonrpc is available only through `salad harness`")
 	}
-	if err := validateEngineerNetworkMode(networkMode, runtime.GOOS); err != nil {
+	if err := validateHarnessNetworkMode(networkMode, runtime.GOOS); err != nil {
 		return err
 	}
 	parentNetworkMode := strings.ToLower(strings.TrimSpace(os.Getenv("DSH_NETWORK_MODE")))
@@ -685,7 +681,7 @@ func listHarnessRuns() error {
 		fmt.Println("  No saved runs for this workspace.")
 		return nil
 	}
-	fmt.Println("Resume with: salad engineer resume <run-id>")
+	fmt.Println("Resume with: salad harness resume <run-id>")
 	return nil
 }
 
@@ -986,7 +982,6 @@ Other:
   salad update          Install the latest release
   salad version         Show the installed version
   salad doctor          Check sign-in, API, and workspace setup
-  salad engineer        Work with an agent in this trusted workspace
 
 Run salad <command> --help for command details.
 `, Version)
@@ -1079,35 +1074,8 @@ or change your normal Salad chat. "salad harness doctor" checks the setup.
   --chat <id>             Opt in to lifecycle receipts for this chat
 `)
 	case "engineer":
-		fmt.Print(`Usage: salad engineer [prompt]
-       salad engineer resume <run-id> [prompt]
-       salad engineer runs
-
-Work with an agent in the trusted current workspace. With no prompt, Salad
-keeps one session open so you can inspect, edit, test, and follow up without
-starting over. Press Ctrl-D to finish the session; Ctrl-C cancels the active
-run and cleans up its child processes.
-
-The normal Salad chat is a separate product path and is not used by this
-command. Network access is denied by default. To request it for this run:
-
-  salad engineer --network allow
-
-Provider and runtime options:
-
-  --salad-provider <name>  Choose the Salad model provider for this run
-  --model <name>           Override the model sent to the provider
-  --network <mode>         deny (default), loopback, or allow
-
-If the server-selected provider is unavailable, retry with an explicitly
-configured provider or set SALAD_HARNESS_PROVIDER. Salad does not silently
-switch providers because that can change cost, privacy, and tool behavior.
-
-Use "salad engineer runs" to see saved local sessions for this workspace,
-then "salad engineer resume <run-id>" to continue one later. Resume only after
-the earlier engineer process has ended; a live PTY/dev server belongs to the
-current process and is not carried into a new one.
-`)
+		fmt.Println("`salad engineer` is no longer a separate terminal.")
+		fmt.Println("Run `salad` from your project directory; trust it with `/trust` when prompted.")
 	case "doctor":
 		fmt.Println("Usage: salad doctor")
 		fmt.Println("Check the local install, sign-in, Salad API, and current workspace.")
