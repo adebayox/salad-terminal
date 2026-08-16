@@ -33,6 +33,9 @@ the next implementation pass.
 - [x] Make workspace provider recovery usable from the one `salad` command:
   `salad --salad-provider <configured-provider>` now selects an explicit
   provider for trusted workspace turns without changing normal Salad Chat.
+- [x] Add signed GitHub build-provenance attestation to tagged release archives
+  using the existing `SHA256SUMS` manifest; first tagged-release verification
+  remains open.
 - [ ] Prove OAuth login, inspect, edit, approve, test, failure, follow-up,
   resume, cancel, and normal Salad Chat journeys in real environments.
 - [ ] Ship only a pinned DSH source revision plus the exact Salad patch set,

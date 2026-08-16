@@ -33,3 +33,6 @@ jobs:
         run: |
           bash -n tools/build-dsh-acp-carrier.sh
           python3 -m py_compile tools/patch-dsh-security.py tools/smoke-dsh-carrier.py
+
+      - name: Check workflow YAML
+        run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path); puts path }' .github/workflows/ci.yml .github/workflows/release.yml

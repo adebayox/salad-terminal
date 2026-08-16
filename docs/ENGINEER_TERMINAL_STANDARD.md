@@ -109,7 +109,7 @@ The terminal reaches flow state only when the following are reliable:
 | Background work/subagents | Corrected carrier source exposes DSH's `jobs` registry and `job_list`/`job_output`/`job_kill`; a real server was stopped through job control | Exact-release collaboration/job and native cross-platform cancellation evidence remain open |
 | Reconnect and replay | DSH persists an append-only session log and the CLI now persists run status/session ID; native Linux x64/ARM64 release smoke restored the same session in a fresh process after both a normal turn and a simulated provider 503. Terminal output is not replayed by Salad itself | Show saved run state and document that live output is re-rendered rather than replayed; add cancellation matrix |
 | Secret and network safety | Credential-shaped reads and outside-workspace writes are denied by the rebuilt macOS carrier; macOS loopback mode works; native Linux x64/ARM64 smoke proves bubblewrap external-network denial | Linux explicitly rejects loopback mode until a real bridge exists; prove credential/file parity on Linux and Windows and add domain-allowlisted external network flow |
-| Installation and update | Checksums, managed carrier, and Unix rollback exist; Windows atomic replacement is staged for the next release | Release the Windows rollback change and test failed-update recovery on native Windows; signed provenance remains open |
+| Installation and update | Checksums, managed carrier, Unix rollback, and tag-release provenance attestation are implemented | Run and verify the first attested release; test failed-update recovery on native Windows |
 | Cross-platform behavior | Archives build; DSH carrier is not on Windows | Product capability is explicit per platform, not surprising |
 | Evidence and observability | Basic run receipts and command output exist | Every claim links to command/test/file evidence |
 
@@ -142,6 +142,12 @@ The exact v0.2.15 release includes DSH's official persistent PTY and
 background-job plugins. It remains a narrowly labeled macOS-focused preview
 until native Linux sandbox proof, domain-level network controls, package trust,
 and the broader release workflow matrix are complete.
+
+Tagged releases now attest every archive named by `SHA256SUMS` using GitHub's
+signed build-provenance service. A consumer can verify a downloaded archive
+against the repository with `gh attestation verify <archive> -R
+adebayox/salad-terminal`; the first new tagged release must still be run and
+verified before this is counted as release evidence.
 
 ## Non-negotiable safety boundary
 
