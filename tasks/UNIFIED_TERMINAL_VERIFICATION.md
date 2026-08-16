@@ -34,3 +34,9 @@ The live model-backed inspect/edit/test journey is not signed off yet. The
 local Salad auth session expired; the provider bridge returned HTTP 401. The
 correct recovery is `salad login`, not changing providers. Tracked as Luna
 work item `work-b84574d78e00`.
+
+The live sign-in trace also found a cross-repository release dependency: the
+terminal sends a loopback callback, while the deployed backend currently falls
+back to the web login-success page. An isolated backend patch (`a81ef46`) adds
+the narrowly scoped loopback callback allowlist; it must be reviewed and
+deployed with the terminal release before live auth verification can pass.
