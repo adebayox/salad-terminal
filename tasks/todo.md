@@ -40,7 +40,9 @@ the next implementation pass.
   security-patched DeepSeek carrier. The first run exposed and the source now
   fixes a malformed shape-checked persona patch. The next run also exposed
   that `--offline` made clean runners impossible; the builder now prefers the
-  cache while allowing a clean pinned dependency fetch. CI proof remains open.
+  cache while allowing a clean pinned dependency fetch. The clean-runner
+  carrier build and ACP smoke passed in CI run `31958133727` at commit
+  `0f4a10e`.
 - [ ] Prove OAuth login, inspect, edit, approve, test, failure, follow-up,
   resume, cancel, and normal Salad Chat journeys in real environments.
 - [ ] Ship only a pinned DSH source revision plus the exact Salad patch set,
@@ -94,11 +96,12 @@ the next implementation pass.
   evidence for the carrier path only, not a substitute for the remaining
   backend runtime verification.
 - Terminal hardening and read-only pull-request CI are pushed to PR #21. The
-  current head `b321a80` passed run `31956770911`: Go formatting, all Go tests,
-  terminal build, and release-script syntax checks passed. CI provisioned Go
-  1.25 from `go.mod`; no local toolchain or dependency install was required.
-- The provider-selection recovery edit is on the next PR head and is awaiting
-  its remote CI result; no paid provider was used for verification.
+  current head `0f4a10e` passed run `31958133727`: Go formatting, all Go tests,
+  terminal build, release-script syntax checks, and the clean pinned DSH
+  carrier build/ACP smoke passed. CI provisioned Go 1.25 from `go.mod`; no
+  local toolchain or dependency install was required.
+- The provider-selection recovery edit and release-script fixes are covered by
+  that remote run; no paid provider was used for verification.
 
 No implementation change is considered complete until the relevant item has a
 direct test or real-run artifact.
