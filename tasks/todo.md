@@ -965,3 +965,11 @@ surface. They share presentation and safety policy but do not share transport.
 - [x] Sent `cwd`, provider, model, and client capabilities through the shared
   initialize-parameter helper and added a regression test.
 - [ ] Verify through remote Go 1.25 CI and a free-provider release smoke.
+
+### Persistent ACP timeout recovery follow-up (2026-08-16)
+
+- [x] Confirmed from the session loop that a prompt timeout could leave a late
+  ACP response in the shared pipe and corrupt the next prompt.
+- [x] Send the ACP `session/cancel` notification on timeout and retire the
+  persistent session so a late response cannot be reused as a new turn.
+- [ ] Verify with remote Go 1.25 CI and publish an exact release smoke.

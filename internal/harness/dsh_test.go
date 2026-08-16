@@ -168,6 +168,36 @@ func TestStartSessionCloseCancelsPendingPermission(t *testing.T) {
 	}
 }
 
+func TestStartSessionPromptTimeoutRetiresSession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := StartSession(ctx, Options{
+		Command:       os.Args[0],
+		Args:          []string{"-test.run=TestHarnessFakeACPTimeout"},
+		Cwd:           t.TempDir(),
+		Env:           []string{"SALAD_DSH_TEST_HELPER=acp-timeout"},
+		PromptTimeout: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+
+	err = session.Prompt(ctx, "This turn must time out")
+	if err == nil || !strings.Contains(err.Error(), "ACP prompt timed out") {
+		t.Fatalf("Prompt() error = %v, want timeout", err)
+	}
+
+	select {
+	case <-session.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed-out session was not retired")
+	}
+
+	if err := session.Prompt(ctx, "Do not reuse the timed-out session"); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("follow-up Prompt() error = %v, want closed session", err)
+	}
+}
+
 func TestRunACPStartsFreshWhenSessionIDWasNotRequested(t *testing.T) {
 	var output strings.Builder
 	var callbackSession string
