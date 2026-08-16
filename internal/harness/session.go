@@ -306,9 +306,7 @@ func (s *Session) run(ctx context.Context, opts Options, ready chan<- error) {
 		}
 	}
 
-	initializedRaw, err := request("1", "initialize", map[string]any{
-		"protocolVersion": 1, "clientCapabilities": map[string]any{},
-	})
+	initializedRaw, err := request("1", "initialize", acpInitializeParams(opts))
 	if err != nil {
 		ready <- err
 		s.emit(SessionEvent{Kind: "error", Err: err})
@@ -371,6 +369,16 @@ func (s *Session) run(ctx context.Context, opts Options, ready chan<- error) {
 				}
 			}
 		}
+	}
+}
+
+func acpInitializeParams(opts Options) map[string]any {
+	return map[string]any{
+		"protocolVersion":    1,
+		"cwd":                opts.Cwd,
+		"provider":           opts.Provider,
+		"model":              opts.Model,
+		"clientCapabilities": map[string]any{},
 	}
 }
 
