@@ -332,9 +332,6 @@ func validateHarnessNetworkMode(networkMode, platform string) error {
 
 func runHarnessMode(args []string, interactive bool) error {
 	surface := "salad harness"
-	if interactive {
-		surface = "salad engineer"
-	}
 	if len(args) > 0 && args[0] == "runs" {
 		if len(args) != 1 {
 			return fmt.Errorf("usage: %s runs", surface)
@@ -368,7 +365,7 @@ func runHarnessMode(args []string, interactive bool) error {
 			return err
 		}
 		if record.Status == "starting" || record.Status == "running" {
-			return fmt.Errorf("cannot resume active run %q; close the existing Salad engineer process first", record.ID)
+			return fmt.Errorf("cannot resume active run %q; close the existing Salad Terminal process first", record.ID)
 		}
 		root, err := workspace.ResolveRoot("")
 		if err != nil || root != record.Workspace {
@@ -443,7 +440,7 @@ func runHarnessMode(args []string, interactive bool) error {
 		return fmt.Errorf("unsupported harness protocol %q; choose acp or jsonrpc", protocol)
 	}
 	if interactive && protocol != "acp" {
-		return errors.New("salad engineer uses the ACP session runtime; jsonrpc is available only through `salad harness`")
+		return errors.New("Salad Terminal interactive mode uses the ACP session runtime; jsonrpc is available only through `salad harness`")
 	}
 	if err := validateHarnessNetworkMode(networkMode, runtime.GOOS); err != nil {
 		return err
@@ -496,7 +493,7 @@ func runHarnessMode(args []string, interactive bool) error {
 			return fmt.Errorf("the managed Salad Harness install is invalid; run `salad harness doctor`: %w", installErr)
 		}
 		if !installed {
-			return errors.New("engineer mode is not installed on this platform; install the macOS/Linux Salad Terminal package with its Harness carrier, or pass --command for a development runtime")
+			return errors.New("the Salad Terminal workspace runtime is not installed on this platform; install the macOS/Linux Salad Terminal package with its Harness carrier, or pass --command for a development runtime")
 		}
 	}
 	opts := harness.Options{
@@ -537,7 +534,7 @@ func runHarnessMode(args []string, interactive bool) error {
 	workspaceID, _ := workspace.OpaqueID(root)
 	runPrefix := "salad-harness"
 	if interactive {
-		runPrefix = "salad-engineer"
+		runPrefix = "salad-terminal"
 	}
 	runID := fmt.Sprintf("%s-%d", runPrefix, time.Now().UnixNano())
 	if protocol == "jsonrpc" && sessionID == "" {
@@ -561,14 +558,10 @@ func runHarnessMode(args []string, interactive bool) error {
 		}
 	}
 	opts.SessionID = sessionID
-	displayName := "harness"
-	if interactive {
-		displayName = "engineer"
-	}
-	fmt.Printf("[%s] run id: %s\n", displayName, runID)
+	fmt.Printf("[salad] run id: %s\n", runID)
 	recordPrompt := strings.Join(prompt, " ")
 	if recordPrompt == "" {
-		recordPrompt = "(interactive engineer session)"
+		recordPrompt = "(interactive Salad Terminal session)"
 	}
 	now := time.Now().UTC()
 	runRecord := harness.RunRecord{ID: runID, Workspace: root, Protocol: protocol, SessionID: sessionID, Command: command, Config: configPath, Prompt: recordPrompt, StartedAt: now, UpdatedAt: now, Status: "starting", ResumeOf: resumeOf}
@@ -657,7 +650,7 @@ func listHarnessRuns() error {
 		return err
 	}
 	found := 0
-	fmt.Printf("Saved Salad engineer runs for %s\n", root)
+	fmt.Printf("Saved Salad Terminal runs for %s\n", root)
 	for _, record := range runs {
 		if record.Workspace != root {
 			continue

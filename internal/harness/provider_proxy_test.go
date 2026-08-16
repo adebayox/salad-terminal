@@ -269,6 +269,50 @@ func TestProviderProxyForwardsStreamSuccess(t *testing.T) {
 	}
 }
 
+func TestProviderProxyCloseCancelsInFlightProviderRequest(t *testing.T) {
+	started := make(chan struct{})
+	client := api.New("https://provider.invalid", "salad-token")
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		close(started)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})
+	proxy, err := StartProviderProxy(context.Background(), client, "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiKey := strings.TrimPrefix(strings.Split(proxy.Environment()[0], "=")[1], "")
+	requestDone := make(chan error, 1)
+	go func() {
+		req, requestErr := http.NewRequest(http.MethodPost, proxy.BaseURL()+"/v1/chat/completions", strings.NewReader(`{"stream":false,"messages":[]}`))
+		if requestErr != nil {
+			requestDone <- requestErr
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		response, requestErr := http.DefaultClient.Do(req)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		requestDone <- requestErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("provider request did not start")
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := proxy.Close(closeCtx); err != nil {
+		t.Fatalf("proxy close = %v", err)
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("in-flight provider request was not cancelled")
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

@@ -1,5 +1,91 @@
 # Workspace tools harness (aligned with Salad CTO plan, 2026-07-20)
 
+## Current upstream evidence
+
+The official DeepSeek Harness repository still labels the project a developer
+preview, warns that compatibility-breaking changes are expected, and documents
+the MIT license and plugin-based Cordis architecture. That is why Salad keeps a
+commit pin, a shape-checked patch, a checksum, and a rollback artifact instead
+of tracking upstream `main` directly.
+
+## Unified terminal correction plan — 2026-08-16
+
+The previous preview proved that the DeepSeek Harness can run local work, but
+it did not prove an engineer-ready Salad experience. This plan is the gate for
+the next implementation pass.
+
+- [x] Keep one user-facing `salad` terminal; do not create a second engineer
+  terminal or change the normal Salad Chat transport.
+- [x] Put the workspace runtime behind a small adapter boundary so the normal
+  chat state machine does not own workspace process, approval, or session code.
+- [x] Carry safe work events through the DSH bridge: plan, tool started,
+  tool finished, file/change location, command output, approval, cancellation,
+  error, and final answer.
+- [x] Make the backend provider gateway enforce provider/model entitlement,
+  product quota, request and token limits, cancellation, and safe diagnostics.
+- [x] Preserve provider tool-round state, including DeepSeek reasoning state,
+  and provide real model streaming where the provider supports it.
+- [x] Remove stale user-facing `salad engineer` references from the audit
+  evidence; `salad` is the only terminal surface and `salad harness` is
+  diagnostic/support-only.
+- [x] Make carrier release tooling require Node.js 24 and the pinned Koffi
+  lockfile version before it mutates/builds the DeepSeek checkout.
+- [ ] Prove OAuth login, inspect, edit, approve, test, failure, follow-up,
+  resume, cancel, and normal Salad Chat journeys in real environments.
+- [ ] Ship only a pinned DSH source revision plus the exact Salad patch set,
+  checksum, platform capability statement, and rollback path.
+- [ ] Re-run the focused terminal/auth verification after the disk-pressure
+  pause in existing CI or a prepared toolchain environment. Local execution
+  is intentionally paused: this checkout requires Go 1.25.0 while this Mac
+  has Go 1.24.4, and local dependency/toolchain downloads are prohibited
+  during the disk-pressure incident.
+
+### Verification record — 2026-08-16
+
+- Added model-free ACP coverage for plan/tool-start/tool-finish events and
+  renders them as local workspace activity in the same Salad TUI transcript.
+- Removed the full-width room header background that rendered as the long white
+  bar in terminals with no reliable light/dark palette.
+- Tightened the child environment from prefix-based forwarding to an exact
+  allowlist; arbitrary `DSH_*`, `DEEPSEEK_*`, and Salad credential variables no
+  longer cross into the harness process.
+- Added clearer client recovery messages for provider key/model, quota, and
+  request-size failures. The backend handler tests covering request shape,
+  tool-round shape, model allowlisting, and explicit unsupported reasoning
+  state passed before the latest streaming edits; the latest backend changes
+  are not locally compiled during the dependency-download pause.
+- Terminal package tests pass for `internal/harness` and `internal/app`; the
+  terminal binary builds and its doctor/help/trust paths work.
+- A clean pinned DSH worktree accepts the shape-checked Salad patch. The
+  installed macOS carrier is checksum-verified and the real free-provider
+  flow works, but a newly compiled carrier from the patched source is not
+  claimed here because the checkout has no dependencies and local dependency
+  downloads are paused.
+- Real free Mistral verification completed in a disposable Go project:
+  inspect, edit, run a failing test, resume the same session, edit the test,
+  and run a passing test. The run list shows both turns sharing one DSH
+  session. A separate Groq probe reached the provider and returned a 502,
+  which is surfaced as a provider failure rather than a false success.
+- Real token-by-token provider streaming and provider-specific reasoning-state
+  continuation are now implemented at the Salad gateway boundary; the
+  carrier still needs a fresh patched build and the desktop OAuth callback
+  still needs a real terminal journey. Normal Salad Chat transport remains
+  untouched by this work.
+- Static review passed after the streaming/reasoning edits (`gofmt`, shell and
+  patch-script syntax checks, diff checks, and provider type-shape inspection).
+  The Data volume currently reports 8.7 GiB free, but local runtime
+  verification remains paused because the required Go 1.25.0 toolchain and
+  uncached backend modules would trigger downloads. Use existing CI or a
+  prepared, matching toolchain for the remaining runtime gates.
+- Existing CI evidence: release run `31890011530` completed successfully for
+  the pinned carrier/job fix at commit `a09460bb117a76ed1b3c4f804296af24063f7ced`.
+  It does not cover the current uncommitted provider-streaming edits, so it is
+  evidence for the carrier path only, not a substitute for the remaining
+  backend runtime verification.
+
+No implementation change is considered complete until the relevant item has a
+direct test or real-run artifact.
+
 ## Follow-up release blocker — account creation keyboard path
 
 - [x] Reproduce the documented `c` action from the initial sign-in screen; it incorrectly entered `c` into the email field.

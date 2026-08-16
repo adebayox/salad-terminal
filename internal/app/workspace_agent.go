@@ -113,10 +113,23 @@ func humanizeWorkspaceError(err error) string {
 	if strings.Contains(text, "http 401") || strings.Contains(text, "unauthorized") || strings.Contains(text, "sign-in has expired") {
 		return "Salad sign-in has expired. Run `salad login`, then retry the workspace request."
 	}
+	if strings.Contains(text, "http 403") || strings.Contains(text, "provider_key_missing") || strings.Contains(text, "model_not_allowed") {
+		return "This Salad model is not available for the terminal yet. Choose a configured provider/model in Salad, then retry."
+	}
+	if strings.Contains(text, "http 429") || strings.Contains(text, "quota") || strings.Contains(text, "rate limit") {
+		return "The Salad terminal model limit has been reached. Try again after the limit resets, or use your own configured provider key."
+	}
+	if strings.Contains(text, "http 413") || strings.Contains(text, "request too large") {
+		return "This workspace request is too large. Ask Salad to work on one file or one smaller task at a time."
+	}
 	if strings.Contains(text, "provider") || strings.Contains(text, "http 502") || strings.Contains(text, "http 503") {
 		return "Salad's workspace model provider is unavailable. Set SALAD_HARNESS_PROVIDER to a configured provider and retry."
 	}
-	return api.HumanizeError(err)
+	humanized := api.HumanizeError(err)
+	if humanized == "Salad is temporarily unavailable. Try again in a moment." {
+		return "Salad's workspace model provider is unavailable. Set SALAD_HARNESS_PROVIDER to a configured provider and retry."
+	}
+	return humanized
 }
 
 func (m *model) closeWorkspace() {
@@ -147,4 +160,74 @@ func (m *model) appendWorkspaceAssistant(text string) {
 	m.messages = append(m.messages, api.ChatMessage{Role: "assistant", AuthorName: "Salad", Body: text, CreatedAt: time.Now()})
 	m.refreshViewport()
 	m.viewport.GotoBottom()
+}
+
+func (m *model) appendWorkspaceActivity(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if len(text) > 2400 {
+		text = text[:2400] + "…"
+	}
+	m.messages = append(m.messages, api.ChatMessage{Role: "system", AuthorName: "local", Body: text, CreatedAt: time.Now()})
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+}
+
+func workspaceToolLabel(event harness.SessionEvent) string {
+	name := strings.TrimSpace(event.ToolName)
+	if name == "" {
+		name = "workspace tool"
+	}
+	switch event.ToolKind {
+	case "read", "search":
+		return "Looking through the project with " + name
+	case "edit":
+		return "Preparing a project edit with " + name
+	case "execute":
+		return "Running a project check with " + name
+	case "fetch":
+		return "Fetching information with " + name
+	default:
+		return "Using " + name + " in the project"
+	}
+}
+
+func workspaceEventText(event harness.SessionEvent) string {
+	switch event.Kind {
+	case "tool_start":
+		text := workspaceToolLabel(event)
+		if event.ToolInput != "" {
+			text += "\n" + event.ToolInput
+		}
+		return text
+	case "tool_end":
+		status := "finished"
+		if strings.EqualFold(event.ToolStatus, "failed") {
+			status = "could not finish"
+		}
+		text := "Workspace action " + status
+		if event.ToolOutput != "" {
+			text += "\n" + event.ToolOutput
+		}
+		return text
+	case "plan":
+		var lines []string
+		for _, item := range event.Plan {
+			mark := "•"
+			if item.Status == "completed" {
+				mark = "✓"
+			} else if item.Status == "in_progress" {
+				mark = "→"
+			}
+			lines = append(lines, mark+" "+item.Content)
+		}
+		if len(lines) == 0 {
+			return "Workspace plan updated"
+		}
+		return "Workspace plan\n" + strings.Join(lines, "\n")
+	default:
+		return ""
+	}
 }

@@ -27,12 +27,92 @@ const (
 type acpSessionUpdate struct {
 	SessionID string `json:"sessionId"`
 	Update    struct {
-		SessionUpdate string `json:"sessionUpdate"`
-		Content       struct {
+		SessionUpdate string          `json:"sessionUpdate"`
+		Content       json.RawMessage `json:"content"`
+		ToolCallID    string          `json:"toolCallId"`
+		Title         string          `json:"title"`
+		Kind          string          `json:"kind"`
+		Status        string          `json:"status"`
+		RawInput      json.RawMessage `json:"rawInput"`
+		Locations     []struct {
+			Path string `json:"path"`
+		} `json:"locations"`
+		Entries []struct {
+			Content  string `json:"content"`
+			Status   string `json:"status"`
+			Priority string `json:"priority"`
+		} `json:"entries"`
+	} `json:"update"`
+}
+
+type workspacePlanItem struct {
+	Content string
+	Status  string
+}
+
+func acpTextContent(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var single struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &single); err == nil && single.Type == "text" {
+		return terminalSafe(single.Text)
+	}
+	var blocks []struct {
+		Type    string `json:"type"`
+		Text    string `json:"text"`
+		Content struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
-	} `json:"update"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, block := range blocks {
+		if block.Type == "text" && block.Text != "" {
+			parts = append(parts, terminalSafe(block.Text))
+		}
+		if block.Type == "content" && block.Content.Type == "text" && block.Content.Text != "" {
+			parts = append(parts, terminalSafe(block.Content.Text))
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+// safeACPToolInput keeps the client useful without putting arbitrary model
+// arguments or credential-shaped values into the terminal transcript.
+func safeACPToolInput(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var input map[string]any
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return ""
+	}
+	safe := make(map[string]string)
+	for _, key := range []string{"path", "file", "cwd", "command", "query", "pattern", "glob"} {
+		value, ok := input[key].(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		safe[key] = terminalSafe(value)
+	}
+	if len(safe) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(safe)
+	if err != nil {
+		return ""
+	}
+	if len(payload) > 4*1024 {
+		payload = payload[:4*1024]
+	}
+	return string(payload)
 }
 
 type acpPermissionRequest struct {
@@ -280,7 +360,7 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 		sessionID = opts.SessionID
 	} else {
 		if resumeRequested {
-			fmt.Fprintln(opts.Output, "[engineer] carrier does not advertise session restore; starting a fresh continuation")
+			fmt.Fprintln(opts.Output, "[salad] carrier does not advertise session restore; starting a fresh continuation")
 		}
 		newSessionParams, err := request("2", "session/new", map[string]any{
 			"cwd": opts.Cwd, "mcpServers": []any{},
@@ -343,7 +423,7 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 				return fmt.Errorf("decode ACP prompt response: %w", err)
 			}
 			if result.StopReason != "" {
-				fmt.Fprintf(opts.Output, "[engineer] %s\n", result.StopReason)
+				fmt.Fprintf(opts.Output, "[salad] %s\n", result.StopReason)
 			}
 			return nil
 		}
@@ -364,7 +444,7 @@ func runACP(ctx context.Context, opts Options, prompt string, interactive bool) 
 		promptID++
 	}
 	for {
-		fmt.Fprint(opts.Output, "\n[salad engineer] > ")
+		fmt.Fprint(opts.Output, "\n[salad] > ")
 		line, err := readLineContext(ctx, inputReader, opts.InputCloser)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return Result{}, fmt.Errorf("read engineer prompt: %w", err)
@@ -433,8 +513,8 @@ func handleACPFrame(opts Options, input *bufio.Reader, respond func(rpcID, any) 
 		if err := json.Unmarshal(frame.Params, &params); err != nil {
 			return fmt.Errorf("decode ACP session update: %w", err)
 		}
-		if params.SessionID == sessionID && params.Update.SessionUpdate == "agent_message_chunk" && params.Update.Content.Type == "text" {
-			if text := terminalSafe(params.Update.Content.Text); text != "" {
+		if params.SessionID == sessionID && params.Update.SessionUpdate == "agent_message_chunk" {
+			if text := acpTextContent(params.Update.Content); text != "" {
 				fmt.Fprint(opts.Output, text)
 			}
 		}
@@ -447,7 +527,7 @@ func handleACPFrame(opts Options, input *bufio.Reader, respond func(rpcID, any) 
 		if params.SessionID != sessionID {
 			return fmt.Errorf("ACP permission request targeted unexpected session %q", params.SessionID)
 		}
-		fmt.Fprintln(opts.Output, "\n[engineer] This action needs approval.")
+		fmt.Fprintln(opts.Output, "\n[salad] This workspace action needs approval.")
 		fmt.Fprint(opts.Output, "Allow once? [y/N] ")
 		line, err := input.ReadString('\n')
 		allow := err == nil && (strings.EqualFold(strings.TrimSpace(line), "y") || strings.EqualFold(strings.TrimSpace(line), "yes"))

@@ -1124,6 +1124,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Workspace agent ready"
 		case "assistant":
 			m.appendWorkspaceAssistant(event.Text)
+		case "tool_start", "tool_end", "plan":
+			m.appendWorkspaceActivity(workspaceEventText(event))
 		case "status":
 			m.status = firstNonEmpty(event.Text, "Workspace agent working…")
 		case "permission":
@@ -2589,7 +2591,7 @@ func (m model) viewRoom() string {
 			peopleText = "project detected · type /trust to enable workspace work"
 		}
 	}
-	header := theme.Header().Width(w).Render(theme.Mark() + "  ·  " + headerTitle)
+	header := theme.HeaderLine().Width(w).Render(theme.Mark() + "  ·  " + headerTitle)
 	people := theme.MutedText().Render(peopleText)
 	body := m.viewport.View()
 	mention := ""

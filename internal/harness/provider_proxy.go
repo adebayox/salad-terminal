@@ -23,6 +23,7 @@ const maxProviderRequestBytes = 8 * 1024 * 1024
 // included in the child environment.
 type ProviderProxy struct {
 	server *http.Server
+	cancel context.CancelFunc
 	token  string
 	url    string
 }
@@ -43,9 +44,10 @@ func StartProviderProxy(ctx context.Context, client *api.Client, provider string
 		return nil, fmt.Errorf("start provider bridge: %w", err)
 	}
 
-	proxy := &ProviderProxy{token: token, url: "http://" + listener.Addr().String()}
+	bridgeCtx, cancel := context.WithCancel(ctx)
+	proxy := &ProviderProxy{cancel: cancel, token: token, url: "http://" + listener.Addr().String()}
 	proxy.server = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxy.handle(ctx, client, provider, w, r)
+		proxy.handle(bridgeCtx, client, provider, w, r)
 	})}
 	go func() {
 		_ = proxy.server.Serve(listener)
@@ -62,6 +64,9 @@ func (p *ProviderProxy) Environment() []string {
 func (p *ProviderProxy) Close(ctx context.Context) error {
 	if p == nil || p.server == nil {
 		return nil
+	}
+	if p.cancel != nil {
+		p.cancel()
 	}
 	return p.server.Shutdown(ctx)
 }

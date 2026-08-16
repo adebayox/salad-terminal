@@ -44,6 +44,10 @@ func openBrowser(rawURL string) error {
 	return cmd.Start()
 }
 
+// browserOpenForLogin is replaceable only for deterministic local callback
+// tests; production always uses openBrowser.
+var browserOpenForLogin = openBrowser
+
 type browserCallbackPayload struct {
 	State string `json:"state"`
 	Token string `json:"token"`
@@ -159,7 +163,7 @@ func LoginGoogleBrowser(baseURL string) error {
 
 	fmt.Println("Opening Salad sign-in in your browser…")
 	fmt.Println(authURL.String())
-	if err := openBrowser(authURL.String()); err != nil {
+	if err := browserOpenForLogin(authURL.String()); err != nil {
 		fmt.Println("Could not open browser automatically. Open the URL above.")
 	}
 

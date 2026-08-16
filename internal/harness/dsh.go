@@ -349,13 +349,37 @@ func firstNonEmpty(values ...string) string {
 
 // scrubbedEnvironment never forwards Salad credentials or arbitrary secrets.
 func scrubbedEnvironment(overlay []string) []string {
-	allowed := map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "TMPDIR": true, "TMP": true, "TEMP": true, "TERM": true, "COLORTERM": true, "LANG": true, "LC_ALL": true, "SHELL": true, "SYSTEMROOT": true, "ComSpec": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true, "XDG_CACHE_HOME": true}
+	allowed := map[string]bool{
+		"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "TMPDIR": true, "TMP": true, "TEMP": true,
+		"TERM": true, "COLORTERM": true, "LANG": true, "LC_ALL": true, "SHELL": true, "SYSTEMROOT": true, "ComSpec": true,
+		"XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true, "XDG_CACHE_HOME": true,
+		// Explicit runtime inputs only. Prefix-based forwarding would let a
+		// parent shell smuggle arbitrary secret-shaped variables into tools.
+		"DEEPSEEK_API_KEY": true, "DEEPSEEK_BASE_URL": true,
+		"DSH_CORDIS_CONFIG": true, "DSH_CWD": true, "DSH_MODEL": true, "DSH_NETWORK_MODE": true,
+		"DSH_PROVIDER": true, "DSH_SESSION_ROOT": true, "DSH_SNAPSHOT_SESSIONS_ROOT": true,
+		// Test-only controls are exact names so they cannot become a general
+		// escape hatch in production.
+		"SALAD_DSH_TEST_HELPER": true, "SALAD_DSH_TEST_MODE": true,
+	}
 	values := map[string]string{}
-	for _, entry := range append(os.Environ(), overlay...) {
+	copyEntry := func(entry string, explicit bool) {
 		name, value, ok := strings.Cut(entry, "=")
-		if ok && safeEnvironmentName(name, allowed) {
-			values[name] = value
+		if !ok || !safeEnvironmentName(name, allowed) {
+			return
 		}
+		// Test helper controls are accepted only from the explicit test/runtime
+		// overlay, never inherited from the developer's shell.
+		if strings.HasPrefix(name, "SALAD_DSH_TEST_") && !explicit {
+			return
+		}
+		values[name] = value
+	}
+	for _, entry := range os.Environ() {
+		copyEntry(entry, false)
+	}
+	for _, entry := range overlay {
+		copyEntry(entry, true)
 	}
 	// Network access is a capability, not ordinary child configuration. A
 	// parent shell's DSH_NETWORK_MODE must never silently survive into a run;
@@ -397,7 +421,7 @@ func withHarnessSafetyDefaults(overlay []string, cwd string) []string {
 }
 
 func safeEnvironmentName(name string, allowed map[string]bool) bool {
-	return allowed[name] || strings.HasPrefix(name, "DSH_") || strings.HasPrefix(name, "DEEPSEEK_") || strings.HasPrefix(name, "SALAD_DSH_")
+	return allowed[name]
 }
 
 // terminalSafe prevents model output from changing the terminal title,

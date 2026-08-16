@@ -26,6 +26,14 @@ type SessionEvent struct {
 	Text         string
 	SessionID    string
 	PermissionID string
+	ToolID       string
+	ToolName     string
+	ToolKind     string
+	ToolStatus   string
+	ToolInput    string
+	ToolOutput   string
+	Locations    []string
+	Plan         []workspacePlanItem
 	Err          error
 }
 
@@ -416,10 +424,46 @@ func (s *Session) handleFrame(ctx context.Context, opts Options, frame rpcFrame,
 		if sessionID != "" && params.SessionID != sessionID {
 			return fmt.Errorf("ACP update targeted unexpected session %q", params.SessionID)
 		}
-		if params.Update.SessionUpdate == "agent_message_chunk" && params.Update.Content.Type == "text" {
-			if text := terminalSafe(params.Update.Content.Text); text != "" {
+		switch params.Update.SessionUpdate {
+		case "agent_message_chunk":
+			if text := acpTextContent(params.Update.Content); text != "" {
 				s.emit(SessionEvent{Kind: "assistant", SessionID: params.SessionID, Text: text})
 			}
+		case "tool_call":
+			event := SessionEvent{
+				Kind: "tool_start", SessionID: params.SessionID,
+				ToolID: params.Update.ToolCallID, ToolName: terminalSafe(params.Update.Title),
+				ToolKind: terminalSafe(params.Update.Kind), ToolStatus: terminalSafe(params.Update.Status),
+				ToolInput: safeACPToolInput(params.Update.RawInput),
+			}
+			for _, location := range params.Update.Locations {
+				if safe := terminalSafe(location.Path); safe != "" {
+					event.Locations = append(event.Locations, safe)
+				}
+			}
+			s.emit(event)
+		case "tool_call_update":
+			event := SessionEvent{
+				Kind: "tool_end", SessionID: params.SessionID,
+				ToolID: params.Update.ToolCallID, ToolStatus: terminalSafe(params.Update.Status),
+				ToolOutput: acpTextContent(params.Update.Content),
+			}
+			for _, location := range params.Update.Locations {
+				if safe := terminalSafe(location.Path); safe != "" {
+					event.Locations = append(event.Locations, safe)
+				}
+			}
+			s.emit(event)
+		case "plan":
+			event := SessionEvent{Kind: "plan", SessionID: params.SessionID}
+			for _, entry := range params.Update.Entries {
+				content := terminalSafe(entry.Content)
+				if content == "" {
+					continue
+				}
+				event.Plan = append(event.Plan, workspacePlanItem{Content: content, Status: terminalSafe(entry.Status)})
+			}
+			s.emit(event)
 		}
 	case "session/request_permission":
 		var params acpPermissionRequest
