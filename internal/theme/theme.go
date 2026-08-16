@@ -8,10 +8,10 @@ import (
 
 // Salad app chrome: cream canvas, charcoal text, calm collaboration.
 var (
-	Cream     = lipgloss.Color("#fbfbfa")
-	CreamSoft = lipgloss.Color("#f4f4f2")
-	Ink       = lipgloss.Color("#202123")
-	Muted     = lipgloss.Color("#6b6f76")
+	Cream     = lipgloss.AdaptiveColor{Light: "#fbfbfa", Dark: "#1f1f1f"}
+	CreamSoft = lipgloss.AdaptiveColor{Light: "#f4f4f2", Dark: "#252526"}
+	Ink       = lipgloss.AdaptiveColor{Light: "#202123", Dark: "#f1f1f1"}
+	Muted     = lipgloss.AdaptiveColor{Light: "#6b6f76", Dark: "#a9a9a9"}
 	Unread    = lipgloss.Color("#4fa3ff")
 	Claude    = lipgloss.Color("#8B5CF6")
 	GPT       = lipgloss.Color("#10B981")
