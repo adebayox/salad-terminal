@@ -256,8 +256,8 @@ jobs:
           }
           $help = & $terminal engineer --help
           $helpText = $help -join "`n"
-          if ($LASTEXITCODE -ne 0 -or $helpText -notmatch 'normal Salad chat is a separate product path') {
-            throw 'Windows engineer help/isolation contract failed'
+          if ($LASTEXITCODE -ne 0 -or $helpText -notmatch 'no longer a separate terminal') {
+            throw 'Windows engineer deprecation contract failed'
           }
           $doctorStart = [System.Diagnostics.ProcessStartInfo]::new()
           $doctorStart.FileName = $terminal
