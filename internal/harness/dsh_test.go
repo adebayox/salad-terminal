@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -195,6 +196,20 @@ func TestStartSessionPromptTimeoutRetiresSession(t *testing.T) {
 
 	if err := session.Prompt(ctx, "Do not reuse the timed-out session"); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("follow-up Prompt() error = %v, want closed session", err)
+	}
+}
+
+func TestWriteFrameContextStopsWaitingOnBlockedCarrier(t *testing.T) {
+	release := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := writeFrameContext(ctx, func(any) error {
+		<-release
+		return nil
+	}, map[string]string{"method": "session/prompt"})
+	close(release)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("writeFrameContext() error = %v, want deadline exceeded", err)
 	}
 }
 

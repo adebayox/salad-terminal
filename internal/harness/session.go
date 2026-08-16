@@ -391,13 +391,30 @@ func acpInitializeParams(opts Options) map[string]any {
 	}
 }
 
+// writeFrameContext prevents a stalled carrier that stopped reading stdin
+// from defeating the prompt deadline. The session is retired after the
+// deadline, so a write that finishes later is contained to that dying child.
+func writeFrameContext(ctx context.Context, writeFrame func(any) error, frame any) error {
+	result := make(chan error, 1)
+	go func() { result <- writeFrame(frame) }()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (s *Session) promptTurn(ctx context.Context, opts Options, sessionID, id, text string, writeFrame func(any) error, writeResponse func(rpcID, any) error, read func(context.Context) (rpcFrame, error)) error {
 	promptCtx, cancel := context.WithTimeout(ctx, opts.PromptTimeout)
 	defer cancel()
-	if err := writeFrame(map[string]any{
+	if err := writeFrameContext(promptCtx, writeFrame, map[string]any{
 		"jsonrpc": "2.0", "id": id, "method": "session/prompt",
 		"params": map[string]any{"sessionId": sessionID, "prompt": []map[string]string{{"type": "text", "text": text}}},
 	}); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("ACP prompt timed out after %s: %w", opts.PromptTimeout, errPromptTimeout)
+		}
 		return err
 	}
 	for {
@@ -406,10 +423,12 @@ func (s *Session) promptTurn(ctx context.Context, opts Options, sessionID, id, t
 			if errors.Is(err, context.DeadlineExceeded) {
 				// ACP defines session/cancel as a notification. It is best effort:
 				// the session is retired below even when an older carrier ignores it.
-				_ = writeFrame(map[string]any{
+				cancelCtx, cancelWrite := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				_ = writeFrameContext(cancelCtx, writeFrame, map[string]any{
 					"jsonrpc": "2.0", "method": "session/cancel",
 					"params": map[string]any{"sessionId": sessionID},
 				})
+				cancelWrite()
 				return fmt.Errorf("ACP prompt timed out after %s: %w", opts.PromptTimeout, errPromptTimeout)
 			}
 			return err
