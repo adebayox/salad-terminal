@@ -11,9 +11,11 @@ import (
 	"testing"
 
 	"github.com/salad-ai/salad-terminal/internal/config"
+	"github.com/zalando/go-keyring"
 )
 
 func TestLoginGoogleBrowserCompletesLoopbackCallback(t *testing.T) {
+	keyring.MockInit()
 	t.Setenv(config.EnvConfigDir, t.TempDir())
 	defer func() { _ = config.ClearCredentials() }()
 
