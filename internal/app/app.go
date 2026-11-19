@@ -105,6 +105,7 @@ type model struct {
 	live                       string // "ws" | "poll" | ""
 	wsClient                   *realtime.Client
 	wsEvents                   <-chan realtime.Event
+	wsPosition                 int64 // last stored event delivered to this sign-in; reconnects resume after it
 	focusFiles                 []string
 	attachTools                bool
 
@@ -579,7 +580,7 @@ func (m *model) openSelectedChat(id, title string) tea.Cmd {
 	m.composer.Focus()
 	openCmd := openRoomCmd(m.client, id)
 	if m.wsClient == nil && m.creds != nil {
-		return tea.Batch(openCmd, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken))
+		return tea.Batch(openCmd, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken, m.wsPosition))
 	}
 	return openCmd
 }
@@ -608,7 +609,7 @@ func (m *model) afterAuth() tea.Cmd {
 		m.refreshViewport()
 		return startWorkspaceSessionCmd(m.client, m.workspaceDir, m.workspaceGeneration)
 	}
-	wsCmd := wsListenCmd(m.creds.BaseURL, m.creds.AccessToken)
+	wsCmd := wsListenCmd(m.creds.BaseURL, m.creds.AccessToken, m.wsPosition)
 
 	// Explicit resume picker (claude --resume).
 	if m.forceResume {
@@ -732,9 +733,9 @@ func pollCmd(client *api.Client, chatID string) tea.Cmd {
 	})
 }
 
-func wsListenCmd(baseURL, token string) tea.Cmd {
+func wsListenCmd(baseURL, token string, from int64) tea.Cmd {
 	return func() tea.Msg {
-		client := realtime.New(baseURL, token)
+		client := realtime.New(baseURL, token).ResumeFrom(from)
 		ch, err := client.Connect()
 		if err != nil {
 			return wsReadyMsg{ok: false, err: err}
@@ -1078,6 +1079,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.client = client
 		m.creds = creds
 		m.err = ""
+		m.wsPosition = 0 // a new sign-in starts its own stream
 		return m, m.afterAuth()
 
 	case signupDoneMsg:
@@ -1281,6 +1283,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsSessionMsg:
 		if m.wsClient != nil {
+			if position := m.wsClient.LastEventID(); position > m.wsPosition {
+				m.wsPosition = position
+			}
 			m.wsClient.Close()
 		}
 		m.wsClient = msg.client
@@ -1294,6 +1299,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wsReadyMsg:
 		if !msg.ok {
 			if m.wsClient != nil {
+				if position := m.wsClient.LastEventID(); position > m.wsPosition {
+					m.wsPosition = position
+				}
 				m.wsClient.Close()
 				m.wsClient = nil
 			}
@@ -1310,7 +1318,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.creds == nil || m.screen == screenBoot || m.screen == screenLogin {
 			return m, nil
 		}
-		return m, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken)
+		return m, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken, m.wsPosition)
 
 	case wsEventMsg:
 		if m.wsEvents == nil {
@@ -2059,7 +2067,7 @@ func (m model) runSlash(line string) (tea.Model, tea.Cmd) {
 			m.screen = screenNewAI
 			cmd := m.beginNewChat()
 			if m.creds != nil {
-				cmd = tea.Batch(cmd, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken))
+				cmd = tea.Batch(cmd, wsListenCmd(m.creds.BaseURL, m.creds.AccessToken, m.wsPosition))
 			}
 			return m, cmd
 		}

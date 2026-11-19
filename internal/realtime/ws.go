@@ -14,18 +14,24 @@ import (
 
 // Event is a salad.v1 realtime envelope (subset used by Terminal).
 type Event struct {
-	Type   string          `json:"type"`
-	ChatID string          `json:"chat_id"`
-	Data   json.RawMessage `json:"data"`
+	EventID int64           `json:"event_id"`
+	Type    string          `json:"type"`
+	ChatID  string          `json:"chat_id"`
+	Data    json.RawMessage `json:"data"`
 }
 
+// Client keeps its stream position across reconnects: Connect resumes after
+// the last event it delivered, so a dropped connection never loses a tool
+// request.
 type Client struct {
 	baseURL string
 	token   string
 
-	mu     sync.Mutex
-	conn   *websocket.Conn
-	closed bool
+	mu          sync.Mutex
+	conn        *websocket.Conn
+	closed      bool
+	done        chan struct{}
+	lastEventID int64
 }
 
 func New(baseURL, token string) *Client {
@@ -77,23 +83,27 @@ func (c *Client) Connect() (<-chan Event, error) {
 	c.mu.Lock()
 	c.conn = conn
 	c.closed = false
+	c.done = make(chan struct{})
+	done, lastEventID := c.done, c.lastEventID
 	c.mu.Unlock()
 
+	if lastEventID > 0 {
+		// The server replays every stored event after this position.
+		if err := conn.WriteJSON(map[string]any{"type": "resume", "last_event_id": lastEventID}); err != nil {
+			c.Close()
+			return nil, err
+		}
+	}
+
 	out := make(chan Event, 32)
-	go c.readLoop(out)
+	go c.readLoop(conn, done, out)
 	go c.pingLoop()
 	return out, nil
 }
 
-func (c *Client) readLoop(out chan<- Event) {
+func (c *Client) readLoop(conn *websocket.Conn, done <-chan struct{}, out chan<- Event) {
 	defer close(out)
 	for {
-		c.mu.Lock()
-		conn := c.conn
-		c.mu.Unlock()
-		if conn == nil {
-			return
-		}
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
 			return
@@ -102,14 +112,16 @@ func (c *Client) readLoop(out chan<- Event) {
 		if err := json.Unmarshal(payload, &evt); err != nil {
 			// Some frames use nested envelope.
 			var wrap struct {
-				Type   string          `json:"type"`
-				ChatID string          `json:"chat_id"`
-				Event  json.RawMessage `json:"event"`
-				Data   json.RawMessage `json:"data"`
+				EventID int64           `json:"event_id"`
+				Type    string          `json:"type"`
+				ChatID  string          `json:"chat_id"`
+				Event   json.RawMessage `json:"event"`
+				Data    json.RawMessage `json:"data"`
 			}
 			if json.Unmarshal(payload, &wrap) != nil {
 				continue
 			}
+			evt.EventID = wrap.EventID
 			evt.Type = wrap.Type
 			evt.ChatID = wrap.ChatID
 			evt.Data = wrap.Data
@@ -117,14 +129,31 @@ func (c *Client) readLoop(out chan<- Event) {
 				evt.Data = wrap.Event
 			}
 		}
-		if evt.Type == "" {
+		if evt.Type == "" || !c.advance(evt.EventID) {
 			continue
 		}
+		// Every event is delivered: a dropped tool request would stall the turn.
 		select {
 		case out <- evt:
-		default:
+		case <-done:
+			return
 		}
 	}
+}
+
+// advance records a stored event's position and reports whether the event is
+// new (a replay can overlap events already delivered).
+func (c *Client) advance(eventID int64) bool {
+	if eventID <= 0 {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if eventID <= c.lastEventID {
+		return false
+	}
+	c.lastEventID = eventID
+	return true
 }
 
 func (c *Client) pingLoop() {
@@ -145,10 +174,30 @@ func (c *Client) pingLoop() {
 	}
 }
 
+// ResumeFrom sets the stream position a new client continues from: the server
+// replays every stored event after it, so a reconnect loses no tool request.
+func (c *Client) ResumeFrom(eventID int64) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastEventID = eventID
+	return c
+}
+
+// LastEventID is the position of the last stored event delivered.
+func (c *Client) LastEventID() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastEventID
+}
+
 func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
+	if c.done != nil {
+		close(c.done)
+		c.done = nil
+	}
 	if c.conn != nil {
 		_ = c.conn.Close()
 		c.conn = nil
